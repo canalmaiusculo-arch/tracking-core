@@ -24,6 +24,10 @@ const META_TEST_EVENT_CODE = process.env.META_TEST_EVENT_CODE || null;
 
 const hasMetaConfig = Boolean(META_PIXEL_ID && META_ACCESS_TOKEN);
 
+// Painel admin: chave para acessar /painel e criar projetos
+const ADMIN_SECRET = process.env.ADMIN_SECRET || null;
+const BASE_URL = process.env.BASE_URL || null; // ex: https://track.ascensaodomentor.com
+
 // Pool de conexão com Postgres (opcional, mas recomendado)
 let pool = null;
 if (DATABASE_URL) {
@@ -67,6 +71,23 @@ app.use(async (req, res, next) => {
 // Utilitários
 function sha256Lower(text) {
   return crypto.createHash('sha256').update(text).digest('hex').toLowerCase();
+}
+
+function generateApiKeys() {
+  const suffix = crypto.randomBytes(12).toString('hex');
+  return {
+    public: `pk_live_${suffix}`,
+    secret: `sk_live_${suffix}`
+  };
+}
+
+function escapeHtml(s) {
+  if (s == null) return '';
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
 }
 
 function buildNormalizedEvent(ev, projectId, source) {
@@ -381,6 +402,217 @@ function mapGatewayPayloadToEvent(body, gateway) {
     source: gateway
   };
 }
+
+// --- Painel admin (requer ADMIN_SECRET em produção) ---
+function checkAdmin(req, res) {
+  if (!ADMIN_SECRET) {
+    return res.status(503).json({ error: 'Painel desativado: ADMIN_SECRET não configurado' });
+  }
+  const key = req.query.key || req.header('X-Admin-Key') || '';
+  if (key !== ADMIN_SECRET) {
+    return res.status(401).json({ error: 'Não autorizado' });
+  }
+  return null;
+}
+
+async function getOrCreateDefaultTenant(client) {
+  const r = await client.query("SELECT id FROM tenants WHERE status = 'active' LIMIT 1");
+  if (r.rows[0]) return r.rows[0].id;
+  const ins = await client.query(
+    "INSERT INTO tenants (name, status) VALUES ('Default', 'active') RETURNING id"
+  );
+  return ins.rows[0].id;
+}
+
+app.get('/painel', async (req, res) => {
+  if (checkAdmin(req, res)) return;
+  if (!pool) {
+    return res.status(503).send('Banco não configurado. Configure DATABASE_URL.');
+  }
+  const baseUrl = BASE_URL || `${req.protocol}://${req.get('host')}`;
+  const adminKey = req.query.key;
+
+  let projects = [];
+  try {
+    const r = await pool.query(
+      `SELECT p.id, p.name, p.api_key_public, p.api_key_secret,
+              EXISTS(SELECT 1 FROM integrations_meta m WHERE m.project_id = p.id AND m.active) AS has_meta
+       FROM projects p
+       WHERE p.status = 'active'
+       ORDER BY p.created_at DESC`
+    );
+    projects = r.rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      api_key_public: row.api_key_public,
+      api_key_secret: row.api_key_secret,
+      has_meta: row.has_meta,
+      script_snippet: `<script src="${baseUrl}/sdk/browser-tracker.js"></script>
+<script>
+  (function(){
+    var t = TrackingCore.createTracker({
+      endpoint: '${baseUrl}/events',
+      apiKey: '${row.api_key_public}'
+    });
+    t.trackPageView();
+  })();
+</script>`,
+      webhook_url: `${baseUrl}/webhooks/kiwify?project_key=${encodeURIComponent(row.api_key_secret)}`
+    }));
+  } catch (e) {
+    console.error('[tracking-core] Erro ao listar projetos no painel:', e.message);
+    return res.status(500).send('Erro ao carregar projetos.');
+  }
+
+  const projectsHtml = projects
+    .map(
+      (p) => `
+    <div class="card">
+      <h3>${escapeHtml(p.name)} ${p.has_meta ? '<span class="badge">Meta</span>' : ''}</h3>
+      <p><strong>Chave pública:</strong> <code>${escapeHtml(p.api_key_public)}</code></p>
+      <label>Script para o cabeçalho:</label>
+      <pre class="snippet"><code>${escapeHtml(p.script_snippet)}</code></pre>
+      <button type="button" class="btn btn-sm" data-copy="${escapeHtml(p.script_snippet)}">Copiar script</button>
+      <label class="mt">URL webhook Kiwify:</label>
+      <pre class="snippet url">${escapeHtml(p.webhook_url)}</pre>
+      <button type="button" class="btn btn-sm" data-copy="${escapeHtml(p.webhook_url)}">Copiar URL</button>
+    </div>`
+    )
+    .join('');
+
+  const html = `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Painel – Tracking Core</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, sans-serif; max-width: 800px; margin: 0 auto; padding: 1.5rem; background: #f5f5f5; }
+    h1 { margin-top: 0; }
+    .card { background: #fff; border-radius: 8px; padding: 1rem 1.25rem; margin-bottom: 1rem; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+    .card h3 { margin: 0 0 0.5rem; font-size: 1.1rem; }
+    .badge { background: #0a0; color: #fff; font-size: 0.7rem; padding: 2px 6px; border-radius: 4px; margin-left: 6px; }
+    label { display: block; margin-top: 0.75rem; color: #555; font-size: 0.9rem; }
+    .mt { margin-top: 1rem; }
+    pre.snippet { background: #f0f0f0; padding: 0.75rem; border-radius: 6px; overflow-x: auto; font-size: 0.8rem; white-space: pre-wrap; word-break: break-all; }
+    pre.snippet.url { word-break: break-all; }
+    .btn { padding: 0.4rem 0.8rem; border-radius: 6px; border: 1px solid #ccc; background: #fff; cursor: pointer; font-size: 0.9rem; }
+    .btn:hover { background: #eee; }
+    .btn-sm { margin-top: 0.25rem; }
+    .btn-primary { background: #333; color: #fff; border-color: #333; }
+    .btn-primary:hover { background: #555; }
+    form { background: #fff; border-radius: 8px; padding: 1.25rem; margin-bottom: 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+    form h2 { margin-top: 0; }
+    input[type="text"], input[type="password"] { width: 100%; padding: 0.5rem; margin: 0.25rem 0 0.75rem; border: 1px solid #ccc; border-radius: 6px; }
+    .toast { position: fixed; bottom: 1rem; right: 1rem; background: #333; color: #fff; padding: 0.5rem 1rem; border-radius: 6px; font-size: 0.9rem; }
+  </style>
+</head>
+<body>
+  <h1>Painel Tracking Core</h1>
+  <p>Projetos ativos: script para o site e URL do webhook Kiwify.</p>
+
+  <form id="formNovo">
+    <h2>Novo projeto</h2>
+    <label>Nome do projeto</label>
+    <input type="text" name="name" required placeholder="Ex: Meu funil">
+    <label>Pixel ID (Meta) – opcional</label>
+    <input type="text" name="pixel_id" placeholder="Ex: 123456789">
+    <label>Access Token (Meta) – opcional</label>
+    <input type="password" name="access_token" placeholder="Token de acesso">
+    <label>Test Event Code (opcional)</label>
+    <input type="text" name="test_event_code" placeholder="">
+    <button type="submit" class="btn btn-primary">Criar projeto</button>
+  </form>
+
+  <h2>Projetos</h2>
+  ${projects.length ? projectsHtml : '<p>Nenhum projeto ainda. Crie um acima.</p>'}
+
+  <div id="toast" class="toast" style="display:none;"></div>
+  <script>
+    var adminKey = ${JSON.stringify(adminKey)};
+    document.querySelectorAll('[data-copy]').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        var text = btn.getAttribute('data-copy');
+        navigator.clipboard.writeText(text).then(function() {
+          var t = document.getElementById('toast');
+          t.textContent = 'Copiado!';
+          t.style.display = 'block';
+          setTimeout(function() { t.style.display = 'none'; }, 2000);
+        });
+      });
+    });
+    document.getElementById('formNovo').addEventListener('submit', function(e) {
+      e.preventDefault();
+      var fd = new FormData(this);
+      var payload = { name: fd.get('name') };
+      if (fd.get('pixel_id')) payload.pixel_id = fd.get('pixel_id');
+      if (fd.get('access_token')) payload.access_token = fd.get('access_token');
+      if (fd.get('test_event_code')) payload.test_event_code = fd.get('test_event_code');
+      fetch('/api/projects', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Admin-Key': adminKey },
+        body: JSON.stringify(payload)
+      }).then(function(r) {
+        if (r.ok) return r.json();
+        throw new Error(r.status === 401 ? 'Chave de admin inválida' : 'Erro ao criar projeto');
+      }).then(function() { window.location.reload(); })
+        .catch(function(err) { alert(err.message); });
+    });
+  </script>
+</body>
+</html>`;
+  res.type('html').send(html);
+});
+
+app.post('/api/projects', async (req, res) => {
+  if (checkAdmin(req, res)) return;
+  if (!pool) {
+    return res.status(503).json({ error: 'Banco não configurado' });
+  }
+  const name = req.body?.name?.trim();
+  if (!name) {
+    return res.status(400).json({ error: 'Campo "name" é obrigatório' });
+  }
+  const pixelId = req.body?.pixel_id?.trim() || null;
+  const accessToken = req.body?.access_token?.trim() || null;
+  const testEventCode = req.body?.test_event_code?.trim() || null;
+  const keys = generateApiKeys();
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const tenantId = await getOrCreateDefaultTenant(client);
+    const projectId = crypto.randomUUID();
+    await client.query(
+      `INSERT INTO projects (id, tenant_id, name, api_key_public, api_key_secret, status)
+       VALUES ($1, $2, $3, $4, $5, 'active')`,
+      [projectId, tenantId, name, keys.public, keys.secret]
+    );
+    if (pixelId && accessToken) {
+      await client.query(
+        `INSERT INTO integrations_meta (project_id, pixel_id, access_token, test_event_code, active)
+         VALUES ($1, $2, $3, $4, true)`,
+        [projectId, pixelId, accessToken, testEventCode || null]
+      );
+    }
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('[tracking-core] Erro ao criar projeto:', err.message);
+    return res.status(500).json({ error: 'Erro ao criar projeto' });
+  } finally {
+    client.release();
+  }
+  const baseUrl = BASE_URL || `${req.protocol}://${req.get('host')}`;
+  res.status(201).json({
+    id: projectId,
+    name,
+    api_key_public: keys.public,
+    api_key_secret: keys.secret,
+    script_snippet: `<script src="${baseUrl}/sdk/browser-tracker.js"></script>\n<script>\n  (function(){\n    var t = TrackingCore.createTracker({ endpoint: '${baseUrl}/events', apiKey: '${keys.public}' });\n    t.trackPageView();\n  })();\n</script>`,
+    webhook_url: `${baseUrl}/webhooks/kiwify?project_key=${encodeURIComponent(keys.secret)}`
+  });
+});
 
 // Webhook Kiwify: ?project_key=API_KEY_SECRET ou header X-Webhook-Secret
 app.post('/webhooks/kiwify', async (req, res) => {

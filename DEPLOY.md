@@ -18,7 +18,7 @@ Com a API em um servidor na nuvem, qualquer pessoa pode acessar e a Kiwify conse
    git add .
    git commit -m "tracking-core white label"
    git branch -M main
-   git remote add origin https://github.com/SEU_USUARIO/tracking-core.git
+   git remote add origin https://github.com/canalmaiusculo-arch/tracking-core.git
    git push -u origin main
    ```
    Se pedir usuário/senha, use um **Personal Access Token** do GitHub (Settings → Developer settings → Personal access tokens) em vez da senha da conta.
@@ -33,31 +33,39 @@ Com a API em um servidor na nuvem, qualquer pessoa pode acessar e a Kiwify conse
 
 ## 2. Criar projeto no Railway
 
-1. Acesse **https://railway.app** e entre com o GitHub.
+1. Acesse **   ** e entre com o GitHub.
 2. Clique em **New Project**.
 3. Escolha **Deploy from GitHub repo** e selecione o repositório `tracking-core`.
 4. O Railway vai detectar que é Node e fazer o deploy. Se pedir **root directory**, deixe em branco ou `./`.
 5. Clique no projeto e depois no **serviço** (o quadrado que apareceu). Vá em **Variables** (Variáveis).
 6. Adicione as variáveis (uma por linha):
-   - `DATABASE_URL` = a mesma URL do Supabase que está no seu `.env` (postgresql://postgres:...@db....supabase.co:5432/postgres)
+   - `DATABASE_URL` = a mesma URL do Supabase que está no seu `.env` (postgresql://postgres:...@db....supabase.co:5432/postgres — use porta **6543** no Session pooler se tiver problema de IPv4)
    - `PORT` = `4100` (o Railway pode preencher sozinho; se já existir, não precisa mudar)
-   - (Opcional) `META_PIXEL_ID`, `META_ACCESS_TOKEN`, `META_TEST_EVENT_CODE` se quiser Meta global
-7. Em **Settings**, procure por **Public Networking** ou **Generate Domain** e ative. O Railway vai mostrar uma URL tipo `tracking-core-production.up.railway.app`.
-8. Anote essa URL (ex.: `https://tracking-core-production.up.railway.app`). Essa é a **URL da sua API em produção**.
+   - `ADMIN_SECRET` = uma chave secreta forte (ex.: senha longa ou UUID). Necessária para acessar o painel e criar projetos.
+   - `BASE_URL` = URL pública da API (ex.: `https://track.ascensaodomentor.com`). Usada nos snippets do painel.
+   - (Opcional) `META_PIXEL_ID`, `META_ACCESS_TOKEN`, `META_TEST_EVENT_CODE` se quiser Meta global (fallback quando o projeto não tem integração)
+7. Em **Settings**, procure por **Public Networking** ou **Generate Domain** e ative. Se tiver domínio próprio (ex.: track.ascensaodomentor.com), configure em **Settings → Domains**.
+8. Anote a URL da API (ex.: `https://track.ascensaodomentor.com`).
 
 ---
 
 ## 3. Usar a URL em produção
 
+**Recomendado:** use o **painel** para criar projetos e copiar script + webhook:
+
+- Acesse: `https://track.ascensaodomentor.com/painel?key=SEU_ADMIN_SECRET` (troque pela sua chave definida em `ADMIN_SECRET`).
+- Crie um projeto (nome; opcional: Pixel ID e Access Token do Meta).
+- Copie o **script para o cabeçalho** e a **URL do webhook Kiwify** exibidos no painel.
+
 ### No seu site (script do SDK)
 
-Troque `http://localhost:4100` pela URL do Railway (sem barra no final):
+Use o snippet exibido no painel ou, manualmente, a URL base da API (ex.: `https://track.ascensaodomentor.com`, sem barra no final):
 
 ```html
-<script src="https://SUA-URL-RAILWAY.app/sdk/browser-tracker.js"></script>
+<script src="https://track.ascensaodomentor.com/sdk/browser-tracker.js"></script>
 <script>
   var tracker = TrackingCore.createTracker({
-    endpoint: 'https://SUA-URL-RAILWAY.app/events',
+    endpoint: 'https://track.ascensaodomentor.com/events',
     apiKey: 'pk_live_xxxxxxxxxxxxxxxx'
   });
   tracker.trackPageView();
@@ -67,15 +75,16 @@ Troque `http://localhost:4100` pela URL do Railway (sem barra no final):
 
 ### Na Kiwify (webhook)
 
-- URL do webhook: `https://SUA-URL-RAILWAY.app/webhooks/kiwify?project_key=sk_live_xxxxxxxxxxxxxxxx`
-- Use exatamente a **api_key_secret** do seu projeto (a mesma que está no banco).
+- URL do webhook: `https://track.ascensaodomentor.com/webhooks/kiwify?project_key=sk_live_xxxxxxxxxxxxxxxx`
+- Use exatamente a **api_key_secret** do seu projeto (visível no painel ou no banco).
 
 ---
 
 ## 4. Conferir
 
-- Abra no navegador: `https://SUA-URL-RAILWAY.app/health` → deve retornar `{"ok":true,...}`.
-- Abra: `https://SUA-URL-RAILWAY.app/sdk/browser-tracker.js` → deve mostrar o código do script.
+- Abra: `https://track.ascensaodomentor.com/health` → deve retornar `{"ok":true,...}`.
+- Abra: `https://track.ascensaodomentor.com/painel?key=SEU_ADMIN_SECRET` → painel com projetos, script e webhook.
+- Abra: `https://track.ascensaodomentor.com/sdk/browser-tracker.js` → deve mostrar o código do script.
 - Depois de colocar o script no site e gerar um evento, confira no Supabase se apareceram linhas nas tabelas `raw_events` e `normalized_events`.
 
 ---

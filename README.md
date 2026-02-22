@@ -6,6 +6,7 @@ Ponte confiável entre funil/site, gateways de pagamento e Meta (Conversions API
 
 - **POST /events** — Eventos do site (SDK). Header `X-API-Key: api_key_public` do projeto.
 - **POST /webhooks/kiwify** — Webhook Kiwify. Autenticação: `?project_key=api_key_secret` ou header `X-Webhook-Secret`.
+- **Painel admin** — `GET /painel?key=ADMIN_SECRET`: listar projetos, copiar script e URL do webhook, criar novo projeto (com Meta opcional).
 - **Resolução de projeto** — Com banco, `project_id` vem da tabela `projects` (api_key_public / api_key_secret).
 - **Meta por projeto** — Se existir linha em `integrations_meta` para o projeto, usa pixel/token de lá; senão usa variáveis de ambiente.
 - **SDK** — `sdk/browser-tracker.js` (TrackingCore.createTracker).
@@ -19,6 +20,8 @@ Ponte confiável entre funil/site, gateways de pagamento e Meta (Conversions API
 2. **Arquivo `.env`** na pasta `tracking-core` (copie de `.env.example`):
    - `DATABASE_URL=postgres://usuario:senha@host:porta/banco`
    - `PORT=4100`
+   - `ADMIN_SECRET` — chave para acessar o painel (`/painel?key=...`) e criar projetos (recomendado em produção).
+   - `BASE_URL` — ex.: `https://track.ascensaodomentor.com` (usado nos snippets do painel).
    - Opcional (fallback global): `META_PIXEL_ID`, `META_ACCESS_TOKEN`, `META_TEST_EVENT_CODE`
 
 3. **Rodar SQL na ordem**
@@ -26,9 +29,9 @@ Ponte confiável entre funil/site, gateways de pagamento e Meta (Conversions API
      1. Todo o conteúdo de `sql/schema.sql`
      2. Todo o conteúdo de `sql/seed.sql`
 
-4. **Ajustar o seed (ou inserir manualmente)**
-   - Em `sql/seed.sql`, troque `api_key_public` e `api_key_secret` por chaves que você vai usar (ex.: `pk_live_xxx`, `sk_live_xxx`).
-   - Se quiser Meta por projeto: descomente o `INSERT INTO integrations_meta` no seed e preencha `pixel_id` e `access_token` do projeto.
+4. **Projetos**
+   - **Pelo painel (recomendado):** acesse `https://sua-api.com/painel?key=SEU_ADMIN_SECRET`, crie projetos e copie script + URL do webhook. Opcional: preencha Pixel ID e Access Token ao criar para Meta por projeto.
+   - **Ou pelo seed:** em `sql/seed.sql`, troque `api_key_public` e `api_key_secret`; descomente `integrations_meta` se quiser Meta.
 
 5. **Subir a API**
    - No terminal, na pasta `tracking-core`:
@@ -36,14 +39,16 @@ Ponte confiável entre funil/site, gateways de pagamento e Meta (Conversions API
    - `npm start`
 
 6. **Testar**
-   - **Site/SDK:** no seu HTML, use o SDK com `apiKey: 'pk_live_xxx'` (o mesmo `api_key_public` do projeto) e `endpoint: 'http://localhost:4100/events'` (ou a URL do servidor).
-   - **Kiwify:** na Kiwify, configure o webhook com URL `https://sua-api.com/webhooks/kiwify?project_key=sk_live_xxx` (use o `api_key_secret` do projeto). Ou envie o secret no header `X-Webhook-Secret`.
+   - **Site/SDK:** use o script exibido no painel (endpoint + apiKey do projeto) ou: `endpoint: 'https://track.ascensaodomentor.com/events'` (ou sua URL), `apiKey: 'pk_live_xxx'`.
+   - **Kiwify:** use a URL do webhook exibida no painel ou: `https://track.ascensaodomentor.com/webhooks/kiwify?project_key=sk_live_xxx`.
 
 ## Endpoints
 
 | Método | Rota | Autenticação | Uso |
 |--------|------|--------------|-----|
 | GET | /health | — | Saúde da API |
+| GET | /painel | Query `key=ADMIN_SECRET` | Painel: projetos, script, webhook, criar projeto |
+| POST | /api/projects | Header `X-Admin-Key: ADMIN_SECRET` | Criar projeto (nome, Meta opcional) |
 | POST | /events | Header `X-API-Key: api_key_public` | Eventos do site (SDK) |
 | POST | /webhooks/kiwify | Query `project_key=api_key_secret` ou header `X-Webhook-Secret` | Compra aprovada Kiwify |
 
@@ -54,10 +59,10 @@ Com banco configurado, `X-API-Key` é obrigatória em `POST /events`; se inváli
 Arquivo: `sdk/browser-tracker.js`
 
 ```html
-<script src="https://sua-api.com/sdk/browser-tracker.js"></script>
+<script src="https://track.ascensaodomentor.com/sdk/browser-tracker.js"></script>
 <script>
   const tracker = TrackingCore.createTracker({
-    endpoint: 'https://sua-api.com/events',
+    endpoint: 'https://track.ascensaodomentor.com/events',
     apiKey: 'pk_live_xxxxxxxxxxxxxxxx'
   });
   tracker.trackPageView();
