@@ -506,6 +506,20 @@ code {
 .dashboard-table td:nth-child(2), .dashboard-table td:nth-child(3) { text-align: right; }
 .dashboard-table td:nth-child(4) { text-align: right; font-variant-numeric: tabular-nums; }
 
+.dashboard-table-utm .input-cost {
+  width: 90px;
+  padding: 0.35rem 0.5rem;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 0.85rem;
+}
+
+.dashboard-table-utm .cpa-cell,
+.dashboard-table-utm .roas-cell { text-align: right; font-variant-numeric: tabular-nums; }
+.dashboard-table-utm .roas-cell { color: var(--success); }
+
 /* Events page (tabela) */
 .events-layout { max-width: 960px; margin: 0 auto; padding: 1.5rem; }
 .events-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1rem; margin-bottom: 1.5rem; border-bottom: 1px solid var(--border); padding-bottom: 1rem; }

@@ -61,6 +61,16 @@ CREATE TABLE IF NOT EXISTS normalized_events (
   UNIQUE(project_id, order_id, event_name)
 );
 
+-- Custo manual por campanha (UTM) para CPA/ROAS
+CREATE TABLE IF NOT EXISTS campaign_costs (
+  utm_source   TEXT NOT NULL,
+  utm_medium   TEXT NOT NULL,
+  utm_campaign TEXT NOT NULL,
+  cost         NUMERIC(12,2) NOT NULL DEFAULT 0,
+  updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (utm_source, utm_medium, utm_campaign)
+);
+
 -- Log de entregas à Meta
 CREATE TABLE IF NOT EXISTS deliveries_meta (
   id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),

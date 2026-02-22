@@ -29,7 +29,7 @@ Ponte confiável entre funil/site, gateways de pagamento e Meta (Conversions API
    - Abra o cliente do Postgres e execute:
      1. Todo o conteúdo de `sql/schema.sql`
      2. Todo o conteúdo de `sql/seed.sql`
-   - Se o banco já existia antes: rode também `sql/migrations/001_add_webhook_out.sql` (adiciona coluna para webhook de saída).
+   - Se o banco já existia antes: rode `sql/migrations/001_add_webhook_out.sql` e `sql/migrations/002_campaign_costs.sql` (webhook de saída e custo por UTM).
 
 4. **Projetos**
    - **Pelo painel (recomendado):** acesse `https://sua-api.com/painel?key=SEU_ADMIN_SECRET`, crie projetos e copie script + URL do webhook. Opcional: preencha Pixel ID e Access Token ao criar para Meta por projeto.
@@ -60,6 +60,7 @@ Ponte confiável entre funil/site, gateways de pagamento e Meta (Conversions API
 | POST | /api/projects/:id/activate | Header `X-Admin-Key` | Reativar projeto |
 | POST | /api/projects/:id/test-event | Header `X-Admin-Key` | Enviar evento PageView de teste |
 | GET | /api/projects/:id/events | Header `X-Admin-Key` | Últimos eventos do projeto (JSON) |
+| PUT | /api/campaign-cost | Header `X-Admin-Key` | Salvar custo manual por campanha (utm_source, utm_medium, utm_campaign, cost) para CPA/ROAS |
 | POST | /events | Header `X-API-Key: api_key_public` | Eventos do site (SDK) |
 | POST | /webhooks/kiwify | Query `project_key=api_key_secret` ou header `X-Webhook-Secret` | Compra aprovada Kiwify |
 

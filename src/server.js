@@ -680,6 +680,17 @@ app.get('/painel', async (req, res) => {
     // ignora
   }
 
+  let costByUtm = {};
+  try {
+    const rCost = await pool.query('SELECT utm_source, utm_medium, utm_campaign, cost FROM campaign_costs');
+    rCost.rows.forEach((row) => {
+      const key = [row.utm_source, row.utm_medium, row.utm_campaign].join('\0');
+      costByUtm[key] = parseFloat(row.cost) || 0;
+    });
+  } catch (e) {
+    // ignora (tabela pode não existir)
+  }
+
   let utmRows = [];
   try {
     const dateCondUtm = dateFrom ? ' AND created_at >= $1' : '';
@@ -699,9 +710,23 @@ app.get('/painel', async (req, res) => {
       utmParams
     );
     utmRows = rUtm.rows.map((row) => {
+      const purchases = parseInt(row.purchases, 10) || 0;
       const v = parseFloat(row.total_value) || 0;
       const valueStr = v > 0 ? 'R$ ' + Number(v).toFixed(2).replace('.', ',') : '—';
-      return `<tr><td>${escapeHtml(row.utm_source)}</td><td>${escapeHtml(row.utm_medium)}</td><td>${escapeHtml(row.utm_campaign)}</td><td>${row.purchases}</td><td>${valueStr}</td></tr>`;
+      const key = [row.utm_source, row.utm_medium, row.utm_campaign].join('\0');
+      const cost = costByUtm[key] ?? 0;
+      const costStr = cost > 0 ? 'R$ ' + Number(cost).toFixed(2).replace('.', ',') : '';
+      const cpaStr = cost > 0 && purchases > 0 ? 'R$ ' + Number(cost / purchases).toFixed(2).replace('.', ',') : '—';
+      const roasStr = cost > 0 && v > 0 ? Number(v / cost).toFixed(2).replace('.', ',') : '—';
+      const us = escapeHtml(row.utm_source);
+      const um = escapeHtml(row.utm_medium);
+      const uc = escapeHtml(row.utm_campaign);
+      return `<tr class="utm-cost-row" data-us="${us}" data-um="${um}" data-uc="${uc}">
+        <td>${us}</td><td>${um}</td><td>${uc}</td><td>${purchases}</td><td>${valueStr}</td>
+        <td><input type="number" step="0.01" min="0" class="input-cost" value="${cost > 0 ? cost : ''}" placeholder="0"></td>
+        <td class="cpa-cell">${cpaStr}</td><td class="roas-cell">${roasStr}</td>
+        <td><button type="button" class="btn btn-sm btn-save-cost">Salvar</button></td>
+      </tr>`;
     });
   } catch (e) {
     // ignora
@@ -746,8 +771,8 @@ app.get('/painel', async (req, res) => {
       <tbody>${summaryRows || '<tr><td colspan="4" class="events-empty">Nenhum projeto com eventos no período.</td></tr>'}</tbody>
     </table>
     ${utmRowsHtml ? `<h3 class="section-subtitle">Por campanha (UTM)</h3>
-    <table class="dashboard-table">
-      <thead><tr><th>utm_source</th><th>utm_medium</th><th>utm_campaign</th><th>Compras</th><th>Valor</th></tr></thead>
+    <table class="dashboard-table dashboard-table-utm">
+      <thead><tr><th>utm_source</th><th>utm_medium</th><th>utm_campaign</th><th>Compras</th><th>Valor</th><th>Custo (R$)</th><th>CPA</th><th>ROAS</th><th></th></tr></thead>
       <tbody>${utmRowsHtml}</tbody>
     </table>` : ''}`;
 
@@ -880,6 +905,30 @@ app.get('/painel', async (req, res) => {
       var q = v !== 'all' ? '?period=' + v : '';
       if (adminKey) q += (q ? '&' : '?') + 'key=' + encodeURIComponent(adminKey);
       window.location.href = '/painel' + q;
+    });
+
+    document.querySelectorAll('.btn-save-cost').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        var row = btn.closest('tr');
+        if (!row) return;
+        var us = row.getAttribute('data-us') || '';
+        var um = row.getAttribute('data-um') || '';
+        var uc = row.getAttribute('data-uc') || '';
+        var input = row.querySelector('.input-cost');
+        var cost = input ? parseFloat(input.value) : 0;
+        if (Number.isNaN(cost)) cost = 0;
+        var headers = { 'Content-Type': 'application/json' };
+        if (adminKey) headers['X-Admin-Key'] = adminKey;
+        fetch('/api/campaign-cost', {
+          method: 'PUT',
+          headers: headers,
+          credentials: 'same-origin',
+          body: JSON.stringify({ utm_source: us, utm_medium: um, utm_campaign: uc, cost: cost })
+        }).then(function(r) {
+          if (r.ok) { window.location.reload(); return; }
+          return r.json().then(function(d) { throw new Error(d.error || 'Erro ao salvar'); });
+        }).catch(function(err) { alert(err.message); });
+      });
     });
     document.querySelectorAll('[data-copy]').forEach(function(btn) {
       btn.addEventListener('click', function() {
@@ -1184,6 +1233,32 @@ app.post('/api/projects/:id/test-event', async (req, res) => {
 });
 
 // Últimos eventos do projeto (para o painel)
+// Custo manual por campanha (UTM) para CPA/ROAS
+app.put('/api/campaign-cost', async (req, res) => {
+  if (checkAdmin(req, res)) return;
+  if (!pool) return res.status(503).json({ error: 'Banco não configurado' });
+  const utmSource = String(req.body?.utm_source ?? '').trim() || '—';
+  const utmMedium = String(req.body?.utm_medium ?? '').trim() || '—';
+  const utmCampaign = String(req.body?.utm_campaign ?? '').trim() || '—';
+  const cost = parseFloat(req.body?.cost);
+  if (Number.isNaN(cost) || cost < 0) {
+    return res.status(400).json({ error: 'Custo deve ser um número >= 0' });
+  }
+  try {
+    await pool.query(
+      `INSERT INTO campaign_costs (utm_source, utm_medium, utm_campaign, cost, updated_at)
+       VALUES ($1, $2, $3, $4, now())
+       ON CONFLICT (utm_source, utm_medium, utm_campaign)
+       DO UPDATE SET cost = $4, updated_at = now()`,
+      [utmSource, utmMedium, utmCampaign, cost]
+    );
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error('[tracking-core] Erro ao salvar custo:', err.message);
+    return res.status(500).json({ error: 'Erro ao salvar custo' });
+  }
+});
+
 app.get('/api/projects/:id/events', async (req, res) => {
   if (checkAdmin(req, res)) return;
   if (!pool) return res.status(503).json({ error: 'Banco não configurado' });
