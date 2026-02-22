@@ -6,7 +6,7 @@ Ponte confiável entre funil/site, gateways de pagamento e Meta (Conversions API
 
 - **POST /events** — Eventos do site (SDK). Header `X-API-Key: api_key_public` do projeto.
 - **POST /webhooks/kiwify** — Webhook Kiwify. Autenticação: `?project_key=api_key_secret` ou header `X-Webhook-Secret`.
-- **Painel admin** — `GET /painel?key=ADMIN_SECRET`: listar projetos, copiar script e URL do webhook, criar novo projeto (com Meta opcional).
+- **Painel admin** — `GET /painel` (com login em `/login` ou `?key=ADMIN_SECRET`): listar projetos, copiar script e URL do webhook, criar/editar/desativar projeto, ver eventos.
 - **Resolução de projeto** — Com banco, `project_id` vem da tabela `projects` (api_key_public / api_key_secret).
 - **Meta por projeto** — Se existir linha em `integrations_meta` para o projeto, usa pixel/token de lá; senão usa variáveis de ambiente.
 - **SDK** — `sdk/browser-tracker.js` (TrackingCore.createTracker).
@@ -47,8 +47,15 @@ Ponte confiável entre funil/site, gateways de pagamento e Meta (Conversions API
 | Método | Rota | Autenticação | Uso |
 |--------|------|--------------|-----|
 | GET | /health | — | Saúde da API |
-| GET | /painel | Query `key=ADMIN_SECRET` | Painel: projetos, script, webhook, criar projeto |
+| GET | /login | — | Página de login (senha = ADMIN_SECRET) |
+| POST | /login | Form senha | Autentica e redireciona para /painel |
+| GET | /logout | — | Encerra sessão e redireciona para /login |
+| GET | /painel | Cookie ou `?key=ADMIN_SECRET` | Painel: projetos, script, webhook, criar/editar/desativar, ver eventos |
+| GET | /painel/events/:projectId | Cookie ou `?key=` | Últimos eventos do projeto |
 | POST | /api/projects | Header `X-Admin-Key: ADMIN_SECRET` | Criar projeto (nome, Meta opcional) |
+| PATCH | /api/projects/:id | Header `X-Admin-Key` | Editar projeto (nome, pixel_id, access_token, test_event_code) |
+| POST | /api/projects/:id/deactivate | Header `X-Admin-Key` | Desativar projeto |
+| GET | /api/projects/:id/events | Header `X-Admin-Key` | Últimos eventos do projeto (JSON) |
 | POST | /events | Header `X-API-Key: api_key_public` | Eventos do site (SDK) |
 | POST | /webhooks/kiwify | Query `project_key=api_key_secret` ou header `X-Webhook-Secret` | Compra aprovada Kiwify |
 

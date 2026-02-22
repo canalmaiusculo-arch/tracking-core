@@ -43,6 +43,7 @@ if (DATABASE_URL) {
 const app = express();
 app.use(cors());
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 app.use('/sdk', express.static(path.join(__dirname, '../sdk')));
 
 // Middleware: resolve project_id via X-API-Key (quando há banco)
@@ -88,6 +89,39 @@ function escapeHtml(s) {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+// Cookie de sessão do painel (assinado, sem banco)
+const ADMIN_COOKIE_NAME = 'tracking_admin';
+const ADMIN_SESSION_MAX_AGE = 24 * 60 * 60; // 24h em segundos
+
+function getCookie(req, name) {
+  const raw = req.headers.cookie;
+  if (!raw) return null;
+  const match = raw.match(new RegExp('(?:^|;)\\s*' + name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '=([^;]*)'));
+  return match ? decodeURIComponent(match[1].trim()) : null;
+}
+
+function createAdminSessionCookie() {
+  const payload = { exp: Math.floor(Date.now() / 1000) + ADMIN_SESSION_MAX_AGE };
+  const payloadB64 = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const sign = crypto.createHmac('sha256', ADMIN_SECRET).update(payloadB64).digest('base64url');
+  return payloadB64 + '.' + sign;
+}
+
+function verifyAdminCookie(req) {
+  const raw = getCookie(req, ADMIN_COOKIE_NAME);
+  if (!raw) return false;
+  const parts = raw.split('.');
+  if (parts.length !== 2) return false;
+  try {
+    const payload = JSON.parse(Buffer.from(parts[0], 'base64url').toString());
+    const sign = crypto.createHmac('sha256', ADMIN_SECRET).update(parts[0]).digest('base64url');
+    if (sign !== parts[1] || payload.exp < Math.floor(Date.now() / 1000)) return false;
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function buildNormalizedEvent(ev, projectId, source) {
@@ -403,17 +437,83 @@ function mapGatewayPayloadToEvent(body, gateway) {
   };
 }
 
-// --- Painel admin (requer ADMIN_SECRET em produção) ---
+// --- Painel admin (login por senha ou ?key= / cookie de sessão) ---
 function checkAdmin(req, res) {
   if (!ADMIN_SECRET) {
     return res.status(503).json({ error: 'Painel desativado: ADMIN_SECRET não configurado' });
   }
   const key = req.query.key || req.header('X-Admin-Key') || '';
-  if (key !== ADMIN_SECRET) {
-    return res.status(401).json({ error: 'Não autorizado' });
-  }
-  return null;
+  if (key === ADMIN_SECRET) return null;
+  if (verifyAdminCookie(req)) return null;
+  return res.status(401).json({ error: 'Não autorizado' });
 }
+
+function isAdminAuthorized(req) {
+  if (!ADMIN_SECRET) return false;
+  if ((req.query.key || req.header('X-Admin-Key') || '') === ADMIN_SECRET) return true;
+  return verifyAdminCookie(req);
+}
+
+function setAdminCookie(res) {
+  const val = createAdminSessionCookie();
+  let cookie = `${ADMIN_COOKIE_NAME}=${val}; Path=/; Max-Age=${ADMIN_SESSION_MAX_AGE}; HttpOnly; SameSite=Lax`;
+  if (process.env.NODE_ENV === 'production') cookie += '; Secure';
+  res.setHeader('Set-Cookie', cookie);
+}
+
+function clearAdminCookie(res) {
+  res.setHeader('Set-Cookie', `${ADMIN_COOKIE_NAME}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax`);
+}
+
+const loginPageHtml = (errorMsg = '') => `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Login – Painel Tracking Core</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, sans-serif; max-width: 360px; margin: 4rem auto; padding: 1.5rem; background: #f5f5f5; }
+    h1 { margin-top: 0; font-size: 1.25rem; }
+    form { background: #fff; padding: 1.5rem; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+    label { display: block; margin-bottom: 0.25rem; color: #555; font-size: 0.9rem; }
+    input { width: 100%; padding: 0.6rem; border: 1px solid #ccc; border-radius: 6px; font-size: 1rem; }
+    .btn { width: 100%; margin-top: 1rem; padding: 0.6rem; border: none; border-radius: 6px; background: #333; color: #fff; font-size: 1rem; cursor: pointer; }
+    .btn:hover { background: #555; }
+    .error { color: #c00; font-size: 0.9rem; margin-top: 0.5rem; }
+  </style>
+</head>
+<body>
+  <h1>Painel Tracking Core</h1>
+  <form method="post" action="/login">
+    <label for="password">Senha de administrador</label>
+    <input type="password" id="password" name="password" required autofocus placeholder="Senha">
+    ${errorMsg ? '<p class="error">' + escapeHtml(errorMsg) + '</p>' : ''}
+    <button type="submit" class="btn">Entrar</button>
+  </form>
+</body>
+</html>`;
+
+app.get('/login', (req, res) => {
+  if (!ADMIN_SECRET) return res.status(503).send('Painel desativado. Configure ADMIN_SECRET.');
+  if (isAdminAuthorized(req)) return res.redirect(302, '/painel');
+  res.type('html').send(loginPageHtml());
+});
+
+app.post('/login', (req, res) => {
+  if (!ADMIN_SECRET) return res.status(503).send('Painel desativado.');
+  const password = (req.body?.password || '').trim();
+  if (password !== ADMIN_SECRET) {
+    return res.type('html').status(401).send(loginPageHtml('Senha incorreta.'));
+  }
+  setAdminCookie(res);
+  res.redirect(302, '/painel');
+});
+
+app.get('/logout', (req, res) => {
+  clearAdminCookie(res);
+  res.redirect(302, '/login');
+});
 
 async function getOrCreateDefaultTenant(client) {
   const r = await client.query("SELECT id FROM tenants WHERE status = 'active' LIMIT 1");
@@ -425,12 +525,15 @@ async function getOrCreateDefaultTenant(client) {
 }
 
 app.get('/painel', async (req, res) => {
-  if (checkAdmin(req, res)) return;
+  if (!ADMIN_SECRET) return res.status(503).send('Painel desativado. Configure ADMIN_SECRET.');
+  if (!isAdminAuthorized(req)) return res.redirect(302, '/login');
   if (!pool) {
     return res.status(503).send('Banco não configurado. Configure DATABASE_URL.');
   }
+  // Se entrou com ?key=, grava cookie para não precisar da key na próxima vez
+  if (req.query.key === ADMIN_SECRET) setAdminCookie(res);
   const baseUrl = BASE_URL || `${req.protocol}://${req.get('host')}`;
-  const adminKey = req.query.key;
+  const adminKey = req.query.key || '';
 
   let projects = [];
   try {
@@ -467,8 +570,14 @@ app.get('/painel', async (req, res) => {
   const projectsHtml = projects
     .map(
       (p) => `
-    <div class="card">
-      <h3>${escapeHtml(p.name)} ${p.has_meta ? '<span class="badge">Meta</span>' : ''}</h3>
+    <div class="card" data-project-id="${escapeHtml(p.id)}">
+      <h3>${escapeHtml(p.name)} ${p.has_meta ? '<span class="badge">Meta</span>' : ''}
+        <span class="card-actions">
+          <a href="/painel/events/${escapeHtml(p.id)}?key=${encodeURIComponent(adminKey || '')}" class="btn btn-sm">Ver eventos</a>
+          <button type="button" class="btn btn-sm btn-edit" data-id="${escapeHtml(p.id)}" data-name="${escapeHtml(p.name)}">Editar</button>
+          <button type="button" class="btn btn-sm btn-danger btn-deactivate" data-id="${escapeHtml(p.id)}" data-name="${escapeHtml(p.name)}">Desativar</button>
+        </span>
+      </h3>
       <p><strong>Chave pública:</strong> <code>${escapeHtml(p.api_key_public)}</code></p>
       <label>Script para o cabeçalho:</label>
       <pre class="snippet"><code>${escapeHtml(p.script_snippet)}</code></pre>
@@ -502,15 +611,24 @@ app.get('/painel', async (req, res) => {
     .btn-sm { margin-top: 0.25rem; }
     .btn-primary { background: #333; color: #fff; border-color: #333; }
     .btn-primary:hover { background: #555; }
+    .btn-danger { color: #c00; border-color: #c00; background: #fff; }
+    .btn-danger:hover { background: #fee; }
+    .card-actions { margin-left: 0.5rem; font-weight: normal; font-size: 0.85rem; }
+    .card-actions .btn { margin-right: 0.25rem; }
     form { background: #fff; border-radius: 8px; padding: 1.25rem; margin-bottom: 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
     form h2 { margin-top: 0; }
     input[type="text"], input[type="password"] { width: 100%; padding: 0.5rem; margin: 0.25rem 0 0.75rem; border: 1px solid #ccc; border-radius: 6px; }
     .toast { position: fixed; bottom: 1rem; right: 1rem; background: #333; color: #fff; padding: 0.5rem 1rem; border-radius: 6px; font-size: 0.9rem; }
+    .modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 10; align-items: center; justify-content: center; }
+    .modal.show { display: flex; }
+    .modal-content { background: #fff; border-radius: 8px; padding: 1.5rem; max-width: 400px; width: 90%; }
+    .modal-content h2 { margin-top: 0; }
+    .modal-close { float: right; cursor: pointer; font-size: 1.2rem; }
   </style>
 </head>
 <body>
   <h1>Painel Tracking Core</h1>
-  <p>Projetos ativos: script para o site e URL do webhook Kiwify.</p>
+  <p>Projetos ativos: script para o site e URL do webhook Kiwify. <a href="/logout">Sair</a></p>
 
   <form id="formNovo">
     <h2>Novo projeto</h2>
@@ -529,6 +647,26 @@ app.get('/painel', async (req, res) => {
   ${projects.length ? projectsHtml : '<p>Nenhum projeto ainda. Crie um acima.</p>'}
 
   <div id="toast" class="toast" style="display:none;"></div>
+
+  <div id="modalEdit" class="modal">
+    <div class="modal-content">
+      <span class="modal-close" id="modalEditClose">&times;</span>
+      <h2>Editar projeto</h2>
+      <form id="formEdit">
+        <input type="hidden" name="id" id="editId">
+        <label>Nome do projeto</label>
+        <input type="text" name="name" id="editName" required>
+        <label>Pixel ID (Meta) – opcional</label>
+        <input type="text" name="pixel_id" id="editPixelId" placeholder="Deixe em branco para não alterar">
+        <label>Access Token (Meta) – opcional</label>
+        <input type="password" name="access_token" id="editAccessToken" placeholder="Deixe em branco para não alterar">
+        <label>Test Event Code (opcional)</label>
+        <input type="text" name="test_event_code" id="editTestEventCode">
+        <button type="submit" class="btn btn-primary">Salvar</button>
+      </form>
+    </div>
+  </div>
+
   <script>
     var adminKey = ${JSON.stringify(adminKey)};
     document.querySelectorAll('[data-copy]').forEach(function(btn) {
@@ -549,15 +687,72 @@ app.get('/painel', async (req, res) => {
       if (fd.get('pixel_id')) payload.pixel_id = fd.get('pixel_id');
       if (fd.get('access_token')) payload.access_token = fd.get('access_token');
       if (fd.get('test_event_code')) payload.test_event_code = fd.get('test_event_code');
-      fetch('/api/projects', {
+      var apiHeaders = { 'Content-Type': 'application/json' };
+    if (adminKey) apiHeaders['X-Admin-Key'] = adminKey;
+    fetch('/api/projects', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Admin-Key': adminKey },
+        headers: apiHeaders,
+        credentials: 'same-origin',
         body: JSON.stringify(payload)
       }).then(function(r) {
         if (r.ok) return r.json();
         throw new Error(r.status === 401 ? 'Chave de admin inválida' : 'Erro ao criar projeto');
       }).then(function() { window.location.reload(); })
         .catch(function(err) { alert(err.message); });
+    });
+
+    var modalEdit = document.getElementById('modalEdit');
+    var formEdit = document.getElementById('formEdit');
+    document.querySelectorAll('.btn-edit').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        document.getElementById('editId').value = btn.getAttribute('data-id');
+        document.getElementById('editName').value = btn.getAttribute('data-name') || '';
+        document.getElementById('editPixelId').value = '';
+        document.getElementById('editAccessToken').value = '';
+        document.getElementById('editTestEventCode').value = '';
+        modalEdit.classList.add('show');
+      });
+    });
+    document.getElementById('modalEditClose').addEventListener('click', function() { modalEdit.classList.remove('show'); });
+    modalEdit.addEventListener('click', function(e) { if (e.target === modalEdit) modalEdit.classList.remove('show'); });
+    formEdit.addEventListener('submit', function(e) {
+      e.preventDefault();
+      var id = document.getElementById('editId').value;
+      var payload = { name: document.getElementById('editName').value.trim() };
+      var pid = document.getElementById('editPixelId').value.trim();
+      var tok = document.getElementById('editAccessToken').value.trim();
+      if (pid) payload.pixel_id = pid;
+      if (tok) payload.access_token = tok;
+      var tec = document.getElementById('editTestEventCode').value.trim();
+      if (tec) payload.test_event_code = tec;
+      var patchHeaders = { 'Content-Type': 'application/json' };
+      if (adminKey) patchHeaders['X-Admin-Key'] = adminKey;
+      fetch('/api/projects/' + encodeURIComponent(id), {
+        method: 'PATCH',
+        headers: patchHeaders,
+        credentials: 'same-origin',
+        body: JSON.stringify(payload)
+      }).then(function(r) {
+        if (r.ok) { modalEdit.classList.remove('show'); window.location.reload(); return; }
+        return r.json().then(function(d) { throw new Error(d.error || 'Erro ao salvar'); });
+      }).catch(function(err) { alert(err.message); });
+    });
+
+    document.querySelectorAll('.btn-deactivate').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        if (!confirm('Desativar o projeto \"' + (btn.getAttribute('data-name') || '') + '\"? O script e o webhook pararão de aceitar eventos.')) return;
+        var id = btn.getAttribute('data-id');
+        var logoutHeaders = {};
+      if (adminKey) logoutHeaders['X-Admin-Key'] = adminKey;
+      fetch('/api/projects/' + encodeURIComponent(id) + '/deactivate', {
+          method: 'POST',
+          headers: logoutHeaders,
+          credentials: 'same-origin'
+        }).then(function(r) {
+          if (r.ok) { window.location.reload(); return; }
+          return r.json().then(function(d) { throw new Error(d.error || 'Erro ao desativar'); });
+        }).catch(function(err) { alert(err.message); });
+      });
     });
   </script>
 </body>
@@ -612,6 +807,138 @@ app.post('/api/projects', async (req, res) => {
     script_snippet: `<script src="${baseUrl}/sdk/browser-tracker.js"></script>\n<script>\n  (function(){\n    var t = TrackingCore.createTracker({ endpoint: '${baseUrl}/events', apiKey: '${keys.public}' });\n    t.trackPageView();\n  })();\n</script>`,
     webhook_url: `${baseUrl}/webhooks/kiwify?project_key=${encodeURIComponent(keys.secret)}`
   });
+});
+
+// Editar projeto (nome e/ou Meta)
+app.patch('/api/projects/:id', async (req, res) => {
+  if (checkAdmin(req, res)) return;
+  if (!pool) return res.status(503).json({ error: 'Banco não configurado' });
+  const projectId = req.params.id;
+  const name = req.body?.name?.trim();
+  const pixelId = req.body?.pixel_id?.trim() || null;
+  const accessToken = req.body?.access_token?.trim() || null;
+  const testEventCode = req.body?.test_event_code?.trim() || null;
+
+  try {
+    if (name) {
+      const upd = await pool.query(
+        'UPDATE projects SET name = $2 WHERE id = $1 AND status = $3 RETURNING id',
+        [projectId, name, 'active']
+      );
+      if (upd.rowCount === 0) {
+        return res.status(404).json({ error: 'Projeto não encontrado' });
+      }
+    }
+    if (pixelId !== undefined && accessToken !== undefined) {
+      const r = await pool.query(
+        'SELECT id FROM integrations_meta WHERE project_id = $1 AND active = true LIMIT 1',
+        [projectId]
+      );
+      if (r.rows[0]) {
+        await pool.query(
+          'UPDATE integrations_meta SET pixel_id = $2, access_token = $3, test_event_code = $4 WHERE id = $1',
+          [r.rows[0].id, pixelId || '', accessToken || '', testEventCode || null]
+        );
+      } else if (pixelId && accessToken) {
+        await pool.query(
+          `INSERT INTO integrations_meta (project_id, pixel_id, access_token, test_event_code, active)
+           VALUES ($1, $2, $3, $4, true)`,
+          [projectId, pixelId, accessToken, testEventCode || null]
+        );
+      }
+    }
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error('[tracking-core] Erro ao editar projeto:', err.message);
+    return res.status(500).json({ error: 'Erro ao editar projeto' });
+  }
+});
+
+// Desativar projeto
+app.post('/api/projects/:id/deactivate', async (req, res) => {
+  if (checkAdmin(req, res)) return;
+  if (!pool) return res.status(503).json({ error: 'Banco não configurado' });
+  const projectId = req.params.id;
+  try {
+    const r = await pool.query(
+      "UPDATE projects SET status = 'inactive' WHERE id = $1 RETURNING id",
+      [projectId]
+    );
+    if (r.rowCount === 0) return res.status(404).json({ error: 'Projeto não encontrado' });
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error('[tracking-core] Erro ao desativar projeto:', err.message);
+    return res.status(500).json({ error: 'Erro ao desativar projeto' });
+  }
+});
+
+// Últimos eventos do projeto (para o painel)
+app.get('/api/projects/:id/events', async (req, res) => {
+  if (checkAdmin(req, res)) return;
+  if (!pool) return res.status(503).json({ error: 'Banco não configurado' });
+  const projectId = req.params.id;
+  const limit = Math.min(parseInt(req.query.limit, 10) || 50, 100);
+  try {
+    const r = await pool.query(
+      `SELECT id, event_name, order_id, value, currency, source, status, created_at
+       FROM normalized_events
+       WHERE project_id = $1
+       ORDER BY created_at DESC
+       LIMIT $2`,
+      [projectId, limit]
+    );
+    const proj = await pool.query(
+      'SELECT id, name FROM projects WHERE id = $1 LIMIT 1',
+      [projectId]
+    );
+    if (!proj.rows[0]) return res.status(404).json({ error: 'Projeto não encontrado' });
+    return res.json({ project: proj.rows[0], events: r.rows });
+  } catch (err) {
+    console.error('[tracking-core] Erro ao listar eventos:', err.message);
+    return res.status(500).json({ error: 'Erro ao listar eventos' });
+  }
+});
+
+// Página do painel: últimos eventos de um projeto
+app.get('/painel/events/:projectId', async (req, res) => {
+  if (!ADMIN_SECRET) return res.status(503).send('Painel desativado.');
+  if (!isAdminAuthorized(req)) return res.redirect(302, '/login');
+  if (!pool) return res.status(503).send('Banco não configurado.');
+  const { projectId } = req.params;
+  const adminKey = req.query.key;
+  try {
+    const proj = await pool.query(
+      'SELECT id, name FROM projects WHERE id = $1 LIMIT 1',
+      [projectId]
+    );
+    if (!proj.rows[0]) return res.status(404).send('Projeto não encontrado.');
+    const r = await pool.query(
+      `SELECT id, event_name, order_id, value, currency, source, status, created_at
+       FROM normalized_events WHERE project_id = $1 ORDER BY created_at DESC LIMIT 100`,
+      [projectId]
+    );
+    const rows = r.rows
+      .map(
+        (e) =>
+          `<tr><td>${escapeHtml(e.created_at)}</td><td>${escapeHtml(e.event_name)}</td><td>${escapeHtml(e.order_id || '—')}</td><td>${e.value != null ? e.value : '—'}</td><td>${escapeHtml(e.source)}</td><td>${escapeHtml(e.status)}</td></tr>`
+      )
+      .join('');
+    const html = `<!DOCTYPE html>
+<html lang="pt-BR">
+<head><meta charset="UTF-8"><title>Eventos – ${escapeHtml(proj.rows[0].name)}</title>
+<style>body{font-family:system-ui;max-width:900px;margin:1rem auto;padding:0 1rem;} table{width:100%;border-collapse:collapse;} th,td{border:1px solid #ddd;padding:0.4rem 0.6rem;text-align:left;} th{background:#f0f0f0;}</style>
+</head>
+<body>
+  <h1>Eventos: ${escapeHtml(proj.rows[0].name)}</h1>
+  <p><a href="/painel?key=${encodeURIComponent(adminKey || '')}">← Voltar ao painel</a></p>
+  <table><thead><tr><th>Data</th><th>Evento</th><th>Pedido</th><th>Valor</th><th>Origem</th><th>Status</th></tr></thead><tbody>${rows || '<tr><td colspan="6">Nenhum evento ainda.</td></tr>'}</tbody></table>
+</body>
+</html>`;
+    res.type('html').send(html);
+  } catch (err) {
+    console.error('[tracking-core] Erro painel eventos:', err.message);
+    res.status(500).send('Erro ao carregar eventos.');
+  }
 });
 
 // Webhook Kiwify: ?project_key=API_KEY_SECRET ou header X-Webhook-Secret
