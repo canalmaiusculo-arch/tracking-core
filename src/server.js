@@ -45,6 +45,7 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use('/sdk', express.static(path.join(__dirname, '../sdk')));
+app.use('/public', express.static(path.join(__dirname, '../public')));
 
 // Middleware: resolve project_id via X-API-Key (quando há banco)
 app.use(async (req, res, next) => {
@@ -471,26 +472,21 @@ const loginPageHtml = (errorMsg = '') => `<!DOCTYPE html>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Login – Painel Tracking Core</title>
-  <style>
-    * { box-sizing: border-box; }
-    body { font-family: system-ui, sans-serif; max-width: 360px; margin: 4rem auto; padding: 1.5rem; background: #f5f5f5; }
-    h1 { margin-top: 0; font-size: 1.25rem; }
-    form { background: #fff; padding: 1.5rem; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
-    label { display: block; margin-bottom: 0.25rem; color: #555; font-size: 0.9rem; }
-    input { width: 100%; padding: 0.6rem; border: 1px solid #ccc; border-radius: 6px; font-size: 1rem; }
-    .btn { width: 100%; margin-top: 1rem; padding: 0.6rem; border: none; border-radius: 6px; background: #333; color: #fff; font-size: 1rem; cursor: pointer; }
-    .btn:hover { background: #555; }
-    .error { color: #c00; font-size: 0.9rem; margin-top: 0.5rem; }
-  </style>
+  <link rel="stylesheet" href="/public/painel.css">
 </head>
 <body>
-  <h1>Painel Tracking Core</h1>
-  <form method="post" action="/login">
-    <label for="password">Senha de administrador</label>
-    <input type="password" id="password" name="password" required autofocus placeholder="Senha">
-    ${errorMsg ? '<p class="error">' + escapeHtml(errorMsg) + '</p>' : ''}
-    <button type="submit" class="btn">Entrar</button>
-  </form>
+  <div class="login-page">
+    <div class="login-card">
+      <h1>Tracking Core</h1>
+      <p class="subtitle">Entre com a senha de administrador.</p>
+      <form method="post" action="/login">
+        <span class="label">Senha</span>
+        <input type="password" id="password" name="password" required autofocus placeholder="Senha">
+        ${errorMsg ? '<p class="error">' + escapeHtml(errorMsg) + '</p>' : ''}
+        <button type="submit" class="btn btn-primary">Entrar</button>
+      </form>
+    </div>
+  </div>
 </body>
 </html>`;
 
@@ -571,20 +567,26 @@ app.get('/painel', async (req, res) => {
     .map(
       (p) => `
     <div class="card" data-project-id="${escapeHtml(p.id)}">
-      <h3>${escapeHtml(p.name)} ${p.has_meta ? '<span class="badge">Meta</span>' : ''}
-        <span class="card-actions">
+      <div class="card-header">
+        <h2 class="card-title">${escapeHtml(p.name)} ${p.has_meta ? '<span class="badge">Meta</span>' : ''}</h2>
+        <div class="card-actions">
           <a href="/painel/events/${escapeHtml(p.id)}?key=${encodeURIComponent(adminKey || '')}" class="btn btn-sm">Ver eventos</a>
           <button type="button" class="btn btn-sm btn-edit" data-id="${escapeHtml(p.id)}" data-name="${escapeHtml(p.name)}">Editar</button>
           <button type="button" class="btn btn-sm btn-danger btn-deactivate" data-id="${escapeHtml(p.id)}" data-name="${escapeHtml(p.name)}">Desativar</button>
-        </span>
-      </h3>
-      <p><strong>Chave pública:</strong> <code>${escapeHtml(p.api_key_public)}</code></p>
-      <label>Script para o cabeçalho:</label>
-      <pre class="snippet"><code>${escapeHtml(p.script_snippet)}</code></pre>
-      <button type="button" class="btn btn-sm" data-copy="${escapeHtml(p.script_snippet)}">Copiar script</button>
-      <label class="mt">URL webhook Kiwify:</label>
-      <pre class="snippet url">${escapeHtml(p.webhook_url)}</pre>
-      <button type="button" class="btn btn-sm" data-copy="${escapeHtml(p.webhook_url)}">Copiar URL</button>
+        </div>
+      </div>
+      <span class="label">Chave pública</span>
+      <p style="margin:0 0 1rem 0;"><code>${escapeHtml(p.api_key_public)}</code></p>
+      <span class="label">Script para o cabeçalho</span>
+      <div class="copy-wrap">
+        <pre class="snippet">${escapeHtml(p.script_snippet)}</pre>
+        <button type="button" class="btn btn-sm" data-copy="${escapeHtml(p.script_snippet)}">Copiar script</button>
+      </div>
+      <span class="label">URL webhook Kiwify</span>
+      <div class="copy-wrap">
+        <pre class="snippet url">${escapeHtml(p.webhook_url)}</pre>
+        <button type="button" class="btn btn-sm" data-copy="${escapeHtml(p.webhook_url)}">Copiar URL</button>
+      </div>
     </div>`
     )
     .join('');
@@ -595,75 +597,52 @@ app.get('/painel', async (req, res) => {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Painel – Tracking Core</title>
-  <style>
-    * { box-sizing: border-box; }
-    body { font-family: system-ui, sans-serif; max-width: 800px; margin: 0 auto; padding: 1.5rem; background: #f5f5f5; }
-    h1 { margin-top: 0; }
-    .card { background: #fff; border-radius: 8px; padding: 1rem 1.25rem; margin-bottom: 1rem; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
-    .card h3 { margin: 0 0 0.5rem; font-size: 1.1rem; }
-    .badge { background: #0a0; color: #fff; font-size: 0.7rem; padding: 2px 6px; border-radius: 4px; margin-left: 6px; }
-    label { display: block; margin-top: 0.75rem; color: #555; font-size: 0.9rem; }
-    .mt { margin-top: 1rem; }
-    pre.snippet { background: #f0f0f0; padding: 0.75rem; border-radius: 6px; overflow-x: auto; font-size: 0.8rem; white-space: pre-wrap; word-break: break-all; }
-    pre.snippet.url { word-break: break-all; }
-    .btn { padding: 0.4rem 0.8rem; border-radius: 6px; border: 1px solid #ccc; background: #fff; cursor: pointer; font-size: 0.9rem; }
-    .btn:hover { background: #eee; }
-    .btn-sm { margin-top: 0.25rem; }
-    .btn-primary { background: #333; color: #fff; border-color: #333; }
-    .btn-primary:hover { background: #555; }
-    .btn-danger { color: #c00; border-color: #c00; background: #fff; }
-    .btn-danger:hover { background: #fee; }
-    .card-actions { margin-left: 0.5rem; font-weight: normal; font-size: 0.85rem; }
-    .card-actions .btn { margin-right: 0.25rem; }
-    form { background: #fff; border-radius: 8px; padding: 1.25rem; margin-bottom: 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
-    form h2 { margin-top: 0; }
-    input[type="text"], input[type="password"] { width: 100%; padding: 0.5rem; margin: 0.25rem 0 0.75rem; border: 1px solid #ccc; border-radius: 6px; }
-    .toast { position: fixed; bottom: 1rem; right: 1rem; background: #333; color: #fff; padding: 0.5rem 1rem; border-radius: 6px; font-size: 0.9rem; }
-    .modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 10; align-items: center; justify-content: center; }
-    .modal.show { display: flex; }
-    .modal-content { background: #fff; border-radius: 8px; padding: 1.5rem; max-width: 400px; width: 90%; }
-    .modal-content h2 { margin-top: 0; }
-    .modal-close { float: right; cursor: pointer; font-size: 1.2rem; }
-  </style>
+  <link rel="stylesheet" href="/public/painel.css">
 </head>
 <body>
-  <h1>Painel Tracking Core</h1>
-  <p>Projetos ativos: script para o site e URL do webhook Kiwify. <a href="/logout">Sair</a></p>
+  <div class="painel-layout">
+    <header class="painel-header">
+      <h1>Tracking Core</h1>
+      <a href="/logout">Sair</a>
+    </header>
 
-  <form id="formNovo">
-    <h2>Novo projeto</h2>
-    <label>Nome do projeto</label>
-    <input type="text" name="name" required placeholder="Ex: Meu funil">
-    <label>Pixel ID (Meta) – opcional</label>
-    <input type="text" name="pixel_id" placeholder="Ex: 123456789">
-    <label>Access Token (Meta) – opcional</label>
-    <input type="password" name="access_token" placeholder="Token de acesso">
-    <label>Test Event Code (opcional)</label>
-    <input type="text" name="test_event_code" placeholder="">
-    <button type="submit" class="btn btn-primary">Criar projeto</button>
-  </form>
-
-  <h2>Projetos</h2>
-  ${projects.length ? projectsHtml : '<p>Nenhum projeto ainda. Crie um acima.</p>'}
-
-  <div id="toast" class="toast" style="display:none;"></div>
-
-  <div id="modalEdit" class="modal">
-    <div class="modal-content">
-      <span class="modal-close" id="modalEditClose">&times;</span>
-      <h2>Editar projeto</h2>
-      <form id="formEdit">
-        <input type="hidden" name="id" id="editId">
-        <label>Nome do projeto</label>
-        <input type="text" name="name" id="editName" required>
-        <label>Pixel ID (Meta) – opcional</label>
-        <input type="text" name="pixel_id" id="editPixelId" placeholder="Deixe em branco para não alterar">
-        <label>Access Token (Meta) – opcional</label>
-        <input type="password" name="access_token" id="editAccessToken" placeholder="Deixe em branco para não alterar">
-        <label>Test Event Code (opcional)</label>
-        <input type="text" name="test_event_code" id="editTestEventCode">
-        <button type="submit" class="btn btn-primary">Salvar</button>
+    <section class="form-card">
+      <h2>Novo projeto</h2>
+      <form id="formNovo">
+        <span class="label">Nome do projeto</span>
+        <input type="text" name="name" required placeholder="Ex: Meu funil">
+        <span class="label">Pixel ID (Meta) – opcional</span>
+        <input type="text" name="pixel_id" placeholder="Ex: 123456789">
+        <span class="label">Access Token (Meta) – opcional</span>
+        <input type="password" name="access_token" placeholder="Token de acesso">
+        <span class="label">Test Event Code (opcional)</span>
+        <input type="text" name="test_event_code" placeholder="">
+        <button type="submit" class="btn btn-primary">Criar projeto</button>
       </form>
+    </section>
+
+    <h2 class="section-title">Projetos</h2>
+    ${projects.length ? projectsHtml : '<div class="empty-state">Nenhum projeto ainda. Crie um acima.</div>'}
+
+    <div id="toast" class="toast" style="display:none;"></div>
+
+    <div id="modalEdit" class="modal">
+      <div class="modal-content">
+        <span class="modal-close" id="modalEditClose" aria-label="Fechar">&times;</span>
+        <h2>Editar projeto</h2>
+        <form id="formEdit">
+          <input type="hidden" name="id" id="editId">
+          <span class="label">Nome do projeto</span>
+          <input type="text" name="name" id="editName" required>
+          <span class="label">Pixel ID (Meta) – opcional</span>
+          <input type="text" name="pixel_id" id="editPixelId" placeholder="Deixe em branco para não alterar">
+          <span class="label">Access Token (Meta) – opcional</span>
+          <input type="password" name="access_token" id="editAccessToken" placeholder="Deixe em branco para não alterar">
+          <span class="label">Test Event Code (opcional)</span>
+          <input type="text" name="test_event_code" id="editTestEventCode">
+          <button type="submit" class="btn btn-primary">Salvar</button>
+        </form>
+      </div>
     </div>
   </div>
 
@@ -925,13 +904,23 @@ app.get('/painel/events/:projectId', async (req, res) => {
       .join('');
     const html = `<!DOCTYPE html>
 <html lang="pt-BR">
-<head><meta charset="UTF-8"><title>Eventos – ${escapeHtml(proj.rows[0].name)}</title>
-<style>body{font-family:system-ui;max-width:900px;margin:1rem auto;padding:0 1rem;} table{width:100%;border-collapse:collapse;} th,td{border:1px solid #ddd;padding:0.4rem 0.6rem;text-align:left;} th{background:#f0f0f0;}</style>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Eventos – ${escapeHtml(proj.rows[0].name)}</title>
+  <link rel="stylesheet" href="/public/painel.css">
 </head>
 <body>
-  <h1>Eventos: ${escapeHtml(proj.rows[0].name)}</h1>
-  <p><a href="/painel?key=${encodeURIComponent(adminKey || '')}">← Voltar ao painel</a></p>
-  <table><thead><tr><th>Data</th><th>Evento</th><th>Pedido</th><th>Valor</th><th>Origem</th><th>Status</th></tr></thead><tbody>${rows || '<tr><td colspan="6">Nenhum evento ainda.</td></tr>'}</tbody></table>
+  <div class="events-layout">
+    <div class="events-header">
+      <h1>Eventos: ${escapeHtml(proj.rows[0].name)}</h1>
+      <a href="/painel?key=${encodeURIComponent(adminKey || '')}" class="btn btn-sm">← Voltar ao painel</a>
+    </div>
+    <table class="events-table">
+      <thead><tr><th>Data</th><th>Evento</th><th>Pedido</th><th>Valor</th><th>Origem</th><th>Status</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="6" class="events-empty">Nenhum evento ainda.</td></tr>'}</tbody>
+    </table>
+  </div>
 </body>
 </html>`;
     res.type('html').send(html);
