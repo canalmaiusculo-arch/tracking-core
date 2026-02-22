@@ -50,7 +50,7 @@ Ponte confiável entre funil/site, gateways de pagamento e Meta (Conversions API
 | GET | /login | — | Página de login (senha = ADMIN_SECRET) |
 | POST | /login | Form senha | Autentica e redireciona para /painel |
 | GET | /logout | — | Encerra sessão e redireciona para /login |
-| GET | /painel | Cookie ou `?key=ADMIN_SECRET` | Painel: projetos, script, webhook, criar/editar/desativar, ver eventos |
+| GET | /painel | Cookie ou `?key=ADMIN_SECRET` | Painel: resumo (eventos/compras/valor), projetos, script, webhook, criar/editar/desativar, ver eventos |
 | GET | /painel/events/:projectId | Cookie ou `?key=` | Últimos eventos do projeto |
 | POST | /api/projects | Header `X-Admin-Key: ADMIN_SECRET` | Criar projeto (nome, Meta opcional) |
 | PATCH | /api/projects/:id | Header `X-Admin-Key` | Editar projeto (nome, pixel_id, access_token, test_event_code) |

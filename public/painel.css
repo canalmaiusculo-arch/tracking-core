@@ -366,6 +366,15 @@ code {
 
 .login-card .btn { width: 100%; margin-top: 0.5rem; padding: 0.7rem; }
 
+/* Dashboard / Resumo */
+.dashboard-table { width: 100%; border-collapse: collapse; background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; margin-bottom: 1.5rem; }
+.dashboard-table th, .dashboard-table td { padding: 0.6rem 1rem; text-align: left; border-bottom: 1px solid var(--border); }
+.dashboard-table th { background: var(--bg-input); color: var(--text-muted); font-size: 0.8rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; }
+.dashboard-table tbody tr:last-child td { border-bottom: none; }
+.dashboard-table tbody tr:hover { background: rgba(255,255,255,0.02); }
+.dashboard-table td:nth-child(2), .dashboard-table td:nth-child(3) { text-align: right; }
+.dashboard-table td:nth-child(4) { text-align: right; font-variant-numeric: tabular-nums; }
+
 /* Events page (tabela) */
 .events-layout { max-width: 960px; margin: 0 auto; padding: 1.5rem; }
 .events-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1rem; margin-bottom: 1.5rem; border-bottom: 1px solid var(--border); padding-bottom: 1rem; }

@@ -620,6 +620,43 @@ app.get('/painel', async (req, res) => {
     // ignora; lista de inativos é opcional
   }
 
+  let statsByProject = {};
+  try {
+    const rStats = await pool.query(
+      `SELECT project_id,
+              COUNT(*) AS total_events,
+              COUNT(*) FILTER (WHERE event_name = 'Purchase') AS purchases,
+              COALESCE(SUM(value) FILTER (WHERE event_name = 'Purchase'), 0) AS total_value
+       FROM normalized_events
+       GROUP BY project_id`
+    );
+    rStats.rows.forEach((row) => {
+      statsByProject[row.project_id] = {
+        total_events: parseInt(row.total_events, 10),
+        purchases: parseInt(row.purchases, 10),
+        total_value: parseFloat(row.total_value) || 0
+      };
+    });
+  } catch (e) {
+    // ignora
+  }
+
+  const summaryRows = projects
+    .map((p) => {
+      const s = statsByProject[p.id] || { total_events: 0, purchases: 0, total_value: 0 };
+      const valueStr = s.total_value > 0 ? 'R$ ' + Number(s.total_value).toFixed(2).replace('.', ',') : '—';
+      return `<tr><td>${escapeHtml(p.name)}</td><td>${s.total_events}</td><td>${s.purchases}</td><td>${valueStr}</td></tr>`;
+    })
+    .join('');
+  const summaryHtml =
+    projects.length > 0
+      ? `<h2 class="section-title">Resumo</h2>
+    <table class="dashboard-table">
+      <thead><tr><th>Projeto</th><th>Eventos</th><th>Compras</th><th>Valor total</th></tr></thead>
+      <tbody>${summaryRows}</tbody>
+    </table>`
+      : '';
+
   const projectsHtml = projects
     .map(
       (p) => `
@@ -690,6 +727,8 @@ app.get('/painel', async (req, res) => {
         <button type="submit" class="btn btn-primary">Criar projeto</button>
       </form>
     </section>
+
+    ${summaryHtml}
 
     <h2 class="section-title">Projetos ativos</h2>
     ${projects.length ? projectsHtml : '<div class="empty-state">Nenhum projeto ativo. Crie um acima ou reative um inativo.</div>'}
