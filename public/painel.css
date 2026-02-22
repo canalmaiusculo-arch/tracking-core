@@ -109,9 +109,28 @@ body {
   font-weight: 600;
 }
 
+.dashboard-header-right {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.dashboard-updated {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
 .dashboard-user {
   font-size: 0.85rem;
   color: var(--text-muted);
+}
+
+.events-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
 }
 
 .dashboard-content {

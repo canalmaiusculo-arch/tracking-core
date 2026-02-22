@@ -839,7 +839,11 @@ app.get('/painel', async (req, res) => {
     <main class="dashboard-main">
       <header class="dashboard-header">
         <h1 class="dashboard-title">Dashboard</h1>
-        <span class="dashboard-user">Admin</span>
+        <div class="dashboard-header-right">
+          <span class="dashboard-updated">Atualizado em ${new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</span>
+          <a href="/painel${period !== 'all' ? '?period=' + period : ''}${adminKey ? (period !== 'all' ? '&' : '?') + 'key=' + encodeURIComponent(adminKey) : ''}" class="btn btn-sm btn-primary">Atualizar</a>
+          <span class="dashboard-user">Admin</span>
+        </div>
       </header>
       <div class="dashboard-content">
         ${untrackedSalesCount > 0 ? `<div class="alert alert-warning" id="alert-untracked">
@@ -1291,17 +1295,24 @@ app.get('/painel/events/:projectId', async (req, res) => {
   if (!isAdminAuthorized(req)) return res.redirect(302, '/login');
   if (!pool) return res.status(503).send('Banco não configurado.');
   const { projectId } = req.params;
-  const adminKey = req.query.key;
+  const adminKey = req.query.key || '';
+  const period = req.query.period || 'all';
+  let dateFrom = null;
+  if (period === '1d') dateFrom = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  else if (period === '7d') dateFrom = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  else if (period === '30d') dateFrom = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
   try {
     const proj = await pool.query(
       'SELECT id, name FROM projects WHERE id = $1 LIMIT 1',
       [projectId]
     );
     if (!proj.rows[0]) return res.status(404).send('Projeto não encontrado.');
+    const dateCond = dateFrom ? ' AND created_at >= $2' : '';
+    const params = dateFrom ? [projectId, dateFrom.toISOString()] : [projectId];
     const r = await pool.query(
       `SELECT id, event_name, order_id, value, currency, source, status, created_at
-       FROM normalized_events WHERE project_id = $1 ORDER BY created_at DESC LIMIT 100`,
-      [projectId]
+       FROM normalized_events WHERE project_id = $1${dateCond} ORDER BY created_at DESC LIMIT 100`,
+      params
     );
     const rows = r.rows
       .map(
@@ -1309,6 +1320,7 @@ app.get('/painel/events/:projectId', async (req, res) => {
           `<tr><td>${escapeHtml(e.created_at)}</td><td>${escapeHtml(e.event_name)}</td><td>${escapeHtml(e.order_id || '—')}</td><td>${e.value != null ? e.value : '—'}</td><td>${escapeHtml(e.source)}</td><td>${escapeHtml(e.status)}</td></tr>`
       )
       .join('');
+    const periodQuery = period !== 'all' ? '&period=' + period : '';
     const html = `<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -1321,13 +1333,28 @@ app.get('/painel/events/:projectId', async (req, res) => {
   <div class="events-layout">
     <div class="events-header">
       <h1>Eventos: ${escapeHtml(proj.rows[0].name)}</h1>
-      <a href="/painel?key=${encodeURIComponent(adminKey || '')}" class="btn btn-sm">← Voltar ao painel</a>
+      <div class="events-header-actions">
+        <select id="eventsPeriodSelect" class="period-select" title="Período">
+          <option value="all" ${period === 'all' ? 'selected' : ''}>Todo o período</option>
+          <option value="1d" ${period === '1d' ? 'selected' : ''}>Últimas 24h</option>
+          <option value="7d" ${period === '7d' ? 'selected' : ''}>Últimos 7 dias</option>
+          <option value="30d" ${period === '30d' ? 'selected' : ''}>Últimos 30 dias</option>
+        </select>
+        <a href="/painel?key=${encodeURIComponent(adminKey)}${periodQuery}" class="btn btn-sm">← Voltar ao painel</a>
+      </div>
     </div>
     <table class="events-table">
       <thead><tr><th>Data</th><th>Evento</th><th>Pedido</th><th>Valor</th><th>Origem</th><th>Status</th></tr></thead>
-      <tbody>${rows || '<tr><td colspan="6" class="events-empty">Nenhum evento ainda.</td></tr>'}</tbody>
+      <tbody>${rows || '<tr><td colspan="6" class="events-empty">Nenhum evento no período.</td></tr>'}</tbody>
     </table>
   </div>
+  <script>
+    document.getElementById('eventsPeriodSelect').addEventListener('change', function() {
+      var v = this.value;
+      var url = '/painel/events/${escapeHtml(projectId)}?' + (v !== 'all' ? 'period=' + v + '&' : '') + 'key=${encodeURIComponent(adminKey)}';
+      window.location.href = url;
+    });
+  </script>
 </body>
 </html>`;
     res.type('html').send(html);
