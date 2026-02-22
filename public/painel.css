@@ -459,9 +459,36 @@ h1, h2, h3 {
 
 .conversion-check input { margin: 0; }
 
+.conversion-tooltip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.1em;
+  height: 1.1em;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--bg);
+  font-size: 0.7rem;
+  font-weight: 700;
+  cursor: help;
+  margin-left: 0.2em;
+  vertical-align: middle;
+}
+
+.conversion-tooltip:hover {
+  background: var(--accent-hover);
+}
+
 .codes-section { margin-bottom: 1rem; }
 .codes-section .copy-wrap { margin-bottom: 1rem; }
+.snippet-hint {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin: 0.25rem 0 0.5rem 0;
+}
+
 .snippet-sm { font-size: 0.75rem; max-height: 8em; overflow-y: auto; }
+.snippet-inline { max-height: 4em; }
 
 /* Forms */
 .form-card {
@@ -536,6 +563,14 @@ input:focus {
   color: var(--text-muted);
   margin-top: 0.25rem;
 }
+
+.metrics-legend {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin: -0.5rem 0 1rem 0;
+}
+
+.metrics-legend span { text-decoration: underline; text-decoration-style: dotted; cursor: help; }
 
 /* Section title */
 .section-title {

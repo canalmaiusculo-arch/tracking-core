@@ -137,11 +137,8 @@ function painelLayout(opts) {
   const sidebarHtml = `
     <div class="sidebar-logo">Tracking Core</div>
     <nav class="sidebar-nav">
-      <span class="sidebar-nav-group">Menu</span>
       ${link('/painel', 'Dashboard', 'dashboard')}
-      <span class="sidebar-nav-group">Conexões</span>
       ${link('/painel/pixel', 'Pixel', 'pixel')}
-      <span class="sidebar-nav-group">Dados</span>
       ${link('/painel/projetos', 'Projetos', 'projetos')}
     </nav>
     <a href="/logout" class="sidebar-link sidebar-logout">Sair</a>`;
@@ -185,17 +182,22 @@ function painelLayout(opts) {
 </html>`;
 }
 
-// Catálogo de conversões para Fase 3 (geração de códigos por projeto)
+// Catálogo de conversões com tooltip (?) para cada uma
 const CONVERSION_CATALOG = [
-  { key: 'PageView', label: 'PageView (página)' },
-  { key: 'ViewContent', label: 'ViewContent (conteúdo)' },
-  { key: 'AddToCart', label: 'AddToCart (carrinho)' },
-  { key: 'InitiateCheckout', label: 'InitiateCheckout (checkout)' },
-  { key: 'Purchase', label: 'Purchase (compra)' },
-  { key: 'Lead', label: 'Lead' },
-  { key: 'Contact', label: 'Contact' },
-  { key: 'Scroll', label: 'Scroll (25%, 75%, 100%)' }
+  { key: 'PageView', label: 'PageView (página)', tooltip: 'Registra visualização de página. Use no &lt;head&gt; ou ao carregar o site para rastrear todas as visitas.' },
+  { key: 'ViewContent', label: 'ViewContent (conteúdo)', tooltip: 'Registra visualização de conteúdo/produto. Use em páginas de oferta ou produto.' },
+  { key: 'AddToCart', label: 'AddToCart (carrinho)', tooltip: 'Dispara quando o usuário adiciona ao carrinho. Cole no botão "Adicionar ao carrinho".' },
+  { key: 'InitiateCheckout', label: 'InitiateCheckout (checkout)', tooltip: 'Dispara ao iniciar o checkout. Cole no botão "Comprar" ou na página de checkout.' },
+  { key: 'Purchase', label: 'Purchase (compra)', tooltip: 'Registra compra concluída. Use na página de obrigado (thank you) com order_id e valor.' },
+  { key: 'Lead', label: 'Lead', tooltip: 'Registra lead (cadastro, formulário). Use ao enviar formulário de captura.' },
+  { key: 'Contact', label: 'Contact', tooltip: 'Registra contato (formulário, chat). Use em botões ou envio de contato.' },
+  { key: 'Scroll', label: 'Scroll (25%, 75%, 100%)', tooltip: 'Dispara ao rolar 25%, 75% e 100% da página ou de um elemento. Use para medir engajamento.' }
 ];
+
+function conversionLabelWithTooltip(c) {
+  const tipPlain = (c.tooltip || '').replace(/<[^>]+>/g, ' ').replace(/&quot;/g, '"').replace(/\s+/g, ' ').trim();
+  return `${escapeHtml(c.label)} <span class="conversion-tooltip" title="${escapeHtml(tipPlain)}" aria-label="Ajuda">?</span>`;
+}
 
 function buildConversionSnippet(conversionKey, baseUrl, apiKey) {
   const apiKeyEsc = (apiKey || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
@@ -214,8 +216,23 @@ function buildConversionSnippet(conversionKey, baseUrl, apiKey) {
     Scroll: "    t.trackScrollDepth({ percentMarks: [25, 75, 100] });"
   };
   const line = lines[conversionKey];
-  if (!line) return base + "\n  })();\n</script>";
-  return base + "\n" + line + "\n  })();\n</script>";
+  if (!line) return base + "\n  window._trackingCore = t;\n  })();\n</script>";
+  return base + "\n" + line + "\n  window._trackingCore = t;\n  })();\n</script>";
+}
+
+// Uma linha só (para colar em botão/elemento quando o script principal já está no site)
+function buildInlineSnippet(conversionKey) {
+  const map = {
+    PageView: 'window._trackingCore && window._trackingCore.trackPageView();',
+    ViewContent: 'window._trackingCore && window._trackingCore.trackViewContent({});',
+    AddToCart: 'window._trackingCore && window._trackingCore.trackAddToCart({});',
+    InitiateCheckout: 'window._trackingCore && window._trackingCore.trackInitiateCheckout({});',
+    Purchase: 'window._trackingCore && window._trackingCore.trackPurchase({ order_id: \'PEDIDO\', value: 0, currency: \'BRL\' });',
+    Lead: 'window._trackingCore && window._trackingCore.trackLead({});',
+    Contact: 'window._trackingCore && window._trackingCore.trackContact({});',
+    Scroll: 'window._trackingCore && window._trackingCore.trackScrollDepth({ percentMarks: [25, 75, 100] });'
+  };
+  return map[conversionKey] || '';
 }
 
 function buildFullScript(conversionKeys, baseUrl, apiKey) {
@@ -238,6 +255,7 @@ function buildFullScript(conversionKeys, baseUrl, apiKey) {
 <script>
 (function(){
   var t = TrackingCore.createTracker({ endpoint: '${baseUrl}/events', apiKey: '${apiKeyEsc}' });
+  window._trackingCore = t;
 ${lines.join('\n')}
 })();
 </script>`;
@@ -885,13 +903,21 @@ app.get('/painel', async (req, res) => {
     totalPurchases += s.purchases;
     totalValue += s.total_value;
   });
+  const totalCost = Object.values(costByUtm).reduce((a, b) => a + b, 0);
   const totalValueStr = totalValue > 0 ? 'R$ ' + Number(totalValue).toFixed(2).replace('.', ',') : '0';
+  const cpaStr = totalPurchases > 0 && totalCost > 0 ? 'R$ ' + Number(totalCost / totalPurchases).toFixed(2).replace('.', ',') : '—';
+  const roasStr = totalCost > 0 && totalValue > 0 ? Number(totalValue / totalCost).toFixed(2).replace('.', ',') + 'x' : '—';
+  const convRateStr = totalEvents > 0 && totalPurchases > 0 ? Number((totalPurchases / totalEvents) * 100).toFixed(2).replace('.', ',') + '%' : '—';
   const kpiCardsHtml =
     `<div class="kpi-grid">
-      <div class="kpi-card"><div class="kpi-card__value">${totalEvents}</div><div class="kpi-card__label">Eventos</div></div>
-      <div class="kpi-card"><div class="kpi-card__value">${totalPurchases}</div><div class="kpi-card__label">Compras</div></div>
-      <div class="kpi-card"><div class="kpi-card__value">${totalValueStr}</div><div class="kpi-card__label">Valor total</div></div>
-    </div>`;
+      <div class="kpi-card" title="Total de eventos (PageView, Purchase, etc.)"><div class="kpi-card__value">${totalEvents}</div><div class="kpi-card__label">Eventos</div></div>
+      <div class="kpi-card" title="Total de compras (Purchase)"><div class="kpi-card__value">${totalPurchases}</div><div class="kpi-card__label">Compras</div></div>
+      <div class="kpi-card" title="Soma do valor das compras"><div class="kpi-card__value">${totalValueStr}</div><div class="kpi-card__label">Valor total</div></div>
+      <div class="kpi-card" title="Custo por aquisição (custo total ÷ compras)"><div class="kpi-card__value">${cpaStr}</div><div class="kpi-card__label">CPA</div></div>
+      <div class="kpi-card" title="Retorno sobre gasto em anúncios (valor ÷ custo)"><div class="kpi-card__value">${roasStr}</div><div class="kpi-card__label">ROAS</div></div>
+      <div class="kpi-card" title="Taxa de conversão (compras ÷ eventos × 100)"><div class="kpi-card__value">${convRateStr}</div><div class="kpi-card__label">Taxa conv.</div></div>
+    </div>
+    <p class="metrics-legend">CPA = Custo por aquisição · ROAS = Retorno sobre gasto em ads · Taxa conv. = Compras/Eventos. <span title="CPC (custo por clique) e CTR exigem dados de cliques/impressões do Meta Ads.">CPC/CTR</span> exigem integração com Meta Ads.</p>`;
 
   const summaryRows = projects
     .map((p) => {
@@ -1091,16 +1117,22 @@ app.get('/painel/projetos', async (req, res) => {
       const enabledSet = new Set(p.enabled_conversions || ['PageView']);
       const checkboxes = CONVERSION_CATALOG.map(
         (c) =>
-          `<label class="conversion-check"><input type="checkbox" class="conversion-cb" data-key="${escapeHtml(c.key)}" ${enabledSet.has(c.key) ? 'checked' : ''}> ${escapeHtml(c.label)}</label>`
+          `<label class="conversion-check"><input type="checkbox" class="conversion-cb" data-key="${escapeHtml(c.key)}" ${enabledSet.has(c.key) ? 'checked' : ''}> ${conversionLabelWithTooltip(c)}</label>`
       ).join('');
       const snippetBlocks = (p.enabled_conversions || ['PageView'])
         .filter((k) => p.snippets && p.snippets[k])
-        .map(
-          (k) =>
-            `<span class="label">${escapeHtml(CONVERSION_CATALOG.find((c) => c.key === k)?.label || k)}</span>
+        .map((k) => {
+          const catalogEntry = CONVERSION_CATALOG.find((c) => c.key === k);
+          const labelHtml = catalogEntry ? conversionLabelWithTooltip(catalogEntry) : escapeHtml(k);
+          const inlineCode = buildInlineSnippet(k);
+          return `<span class="label">${labelHtml}</span>
+      <p class="snippet-hint">Script para header ou body (carrega tudo de uma vez):</p>
       <div class="copy-wrap"><pre class="snippet snippet-sm">${escapeHtml(p.snippets[k])}</pre>
-      <button type="button" class="btn btn-sm" data-copy="${escapeHtml((p.snippets || {})[k] || '')}">Copiar</button></div>`
-        )
+      <button type="button" class="btn btn-sm" data-copy="${escapeHtml((p.snippets || {})[k] || '')}">Copiar script</button></div>
+      <p class="snippet-hint">Para colar em um botão ou elemento (use depois do script principal no site):</p>
+      <div class="copy-wrap"><pre class="snippet snippet-sm snippet-inline">${escapeHtml(inlineCode)}</pre>
+      <button type="button" class="btn btn-sm" data-copy="${escapeHtml(inlineCode)}">Copiar</button></div>`;
+        })
         .join('');
       return `
     <div class="card" data-project-id="${escapeHtml(p.id)}">
@@ -1121,8 +1153,9 @@ app.get('/painel/projetos', async (req, res) => {
       </div>
       <div class="codes-section">
         <span class="label">Códigos de rastreamento</span>
+        <p class="snippet-hint">Cada conversão: script para header/body e código para colar em botão ou elemento.</p>
         ${snippetBlocks}
-        <span class="label">Script completo (todas as selecionadas)</span>
+        <span class="label">Script completo (header ou body) – todas as conversões selecionadas</span>
         <div class="copy-wrap">
           <pre class="snippet">${escapeHtml(p.full_script || p.script_snippet)}</pre>
           <button type="button" class="btn btn-sm" data-copy="${escapeHtml(p.full_script || p.script_snippet)}">Copiar script completo</button>
@@ -1151,6 +1184,10 @@ app.get('/painel/projetos', async (req, res) => {
     )
     .join('');
 
+  const formConversionCheckboxes = CONVERSION_CATALOG.map(
+    (c) =>
+      `<label class="conversion-check"><input type="checkbox" class="form-conversion-cb" name="conversion" value="${escapeHtml(c.key)}" ${c.key === 'PageView' ? 'checked' : ''}> ${conversionLabelWithTooltip(c)}</label>`
+  ).join('');
   const projetosContent = `
     <section class="form-card">
       <h2>Novo projeto</h2>
@@ -1163,6 +1200,9 @@ app.get('/painel/projetos', async (req, res) => {
         <input type="password" name="access_token" placeholder="Token de acesso">
         <span class="label">Test Event Code (opcional)</span>
         <input type="text" name="test_event_code" placeholder="">
+        <span class="label">Conversões a rastrear</span>
+        <p class="snippet-hint">Selecione os eventos que deseja rastrear. O script será gerado com base nisso.</p>
+        <div class="conversion-checkboxes">${formConversionCheckboxes}</div>
         <button type="submit" class="btn btn-primary">Criar projeto</button>
       </form>
     </section>
@@ -1207,11 +1247,15 @@ app.get('/painel/projetos', async (req, res) => {
     });
     document.getElementById('formNovo').addEventListener('submit', function(e) {
       e.preventDefault();
-      var fd = new FormData(this);
+      var form = this;
+      var fd = new FormData(form);
       var payload = { name: fd.get('name') };
       if (fd.get('pixel_id')) payload.pixel_id = fd.get('pixel_id');
       if (fd.get('access_token')) payload.access_token = fd.get('access_token');
       if (fd.get('test_event_code')) payload.test_event_code = fd.get('test_event_code');
+      var conversions = [];
+      form.querySelectorAll('.form-conversion-cb:checked').forEach(function(cb) { if (cb.value) conversions.push(cb.value); });
+      if (conversions.length) payload.enabled_conversions = conversions;
       var apiHeaders = { 'Content-Type': 'application/json' };
       if (adminKey) apiHeaders['X-Admin-Key'] = adminKey;
       fetch('/api/projects', { method: 'POST', headers: apiHeaders, credentials: 'same-origin', body: JSON.stringify(payload) })
