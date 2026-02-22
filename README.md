@@ -10,7 +10,7 @@ Ponte confiável entre funil/site, gateways de pagamento e Meta (Conversions API
 - **Webhook de saída** — Por projeto, opcional: URL chamada em POST quando houver evento Purchase (SDK ou Kiwify). Configure em Editar projeto.
 - **Resolução de projeto** — Com banco, `project_id` vem da tabela `projects` (api_key_public / api_key_secret).
 - **Meta por projeto** — Se existir linha em `integrations_meta` para o projeto, usa pixel/token de lá; senão usa variáveis de ambiente.
-- **SDK** — `sdk/browser-tracker.js` (TrackingCore.createTracker).
+- **SDK** — `sdk/browser-tracker.js` (TrackingCore.createTracker). Eventos: PageView, ViewContent, AddToCart, InitiateCheckout, Purchase, Lead, Contact e scroll (25%, 75%, 100%). Ver **[CONVERSOES.md](CONVERSOES.md)** para exemplos e snippets.
 - **Schema** — `sql/schema.sql` + `sql/seed.sql` para primeiro tenant/projeto.
 
 ## Checklist para deixar tudo funcionando (depende de você)

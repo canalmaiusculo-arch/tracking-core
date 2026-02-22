@@ -29,21 +29,21 @@ Roadmap para melhorar a visualização e as conversões do painel Tracking Core.
 **Objetivo:** Ampliar eventos rastreados e adicionar conversão por scroll.
 
 ### 2.1 Eventos padrão (Meta-like)
-- [ ] **ViewContent** – visualização de conteúdo/página.
-- [ ] **InitiateCheckout** – início do checkout.
-- [ ] **AddToCart** – adicionar ao carrinho.
-- [ ] **Purchase** – já existe; manter e garantir consistência com Meta.
-- [ ] Backend e SDK: aceitar e persistir esses `event_name` em `normalized_events` (e raw); enviar para Meta quando pixel estiver configurado.
+- [x] **ViewContent** – visualização de conteúdo/página.
+- [x] **InitiateCheckout** – início do checkout.
+- [x] **AddToCart** – adicionar ao carrinho.
+- [x] **Purchase** – já existe; manter e garantir consistência com Meta.
+- [x] Backend e SDK: aceitar e persistir esses `event_name` em `normalized_events` (e raw); enviar para Meta quando pixel estiver configurado.
 
 ### 2.2 Conversão por scroll
-- [ ] Definir eventos: ex. `scroll_25`, `scroll_75`, `scroll_100` (ou % configurável).
-- [ ] **Snippet** (código) que o usuário cola na página ou em uma seção: ao rolar até X% daquele elemento, dispara o evento.
-- [ ] Documentar: “cole no botão ou na seção; ao rolar até 25%/75%/100% dispara o evento”.
-- [ ] Backend: aceitar e salvar esses eventos; opcional: enviar como evento customizado ao Meta se fizer sentido.
+- [x] Definir eventos: ex. `scroll_25`, `scroll_75`, `scroll_100` (ou % configurável).
+- [x] **Snippet** (código) que o usuário cola na página ou em uma seção: ao rolar até X% daquele elemento, dispara o evento.
+- [x] Documentar: “cole no botão ou na seção; ao rolar até 25%/75%/100% dispara o evento”.
+- [x] Backend: aceitar e salvar esses eventos; opcional: enviar como evento customizado ao Meta se fizer sentido.
 
 ### 2.3 Outros eventos úteis
-- [ ] Avaliar e, se fizer sentido, adicionar: **Lead**, **Contact**, **Subscribe** (e outros que combinem com o produto).
-- [ ] Manter lista de eventos documentada no painel ou no README.
+- [x] Avaliar e, se fizer sentido, adicionar: **Lead**, **Contact**, **Subscribe** (e outros que combinem com o produto).
+- [x] Manter lista de eventos documentada no painel ou no README.
 
 **Entregável Fase 2:** Novos eventos disponíveis no SDK/API; snippet de scroll funcionando; backend e (se aplicável) Meta recebendo os eventos.
 
