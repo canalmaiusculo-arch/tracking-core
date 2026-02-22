@@ -708,6 +708,23 @@ app.get('/painel', async (req, res) => {
   }
   const utmRowsHtml = utmRows.join('');
 
+  let untrackedSalesCount = 0;
+  try {
+    const dateCondUntracked = dateFrom ? ' AND created_at >= $1' : '';
+    const untrackedParams = dateFrom ? [dateFrom.toISOString()] : [];
+    const rUntracked = await pool.query(
+      `SELECT COUNT(*) AS cnt
+       FROM normalized_events
+       WHERE event_name = 'Purchase'
+         AND source = 'gateway'
+         AND (context IS NULL OR context->>'utm_source' IS NULL OR TRIM(COALESCE(context->>'utm_source', '')) = '')${dateCondUntracked}`,
+      untrackedParams
+    );
+    untrackedSalesCount = parseInt(rUntracked.rows[0]?.cnt, 10) || 0;
+  } catch (e) {
+    // ignora
+  }
+
   const summaryRows = projects
     .map((p) => {
       const s = statsByProject[p.id] || { total_events: 0, purchases: 0, total_value: 0 };
@@ -800,6 +817,11 @@ app.get('/painel', async (req, res) => {
         <span class="dashboard-user">Admin</span>
       </header>
       <div class="dashboard-content">
+        ${untrackedSalesCount > 0 ? `<div class="alert alert-warning" id="alert-untracked">
+          <strong>${untrackedSalesCount} venda${untrackedSalesCount !== 1 ? 's' : ''} não trackeada${untrackedSalesCount !== 1 ? 's' : ''}.</strong>
+          Compras que chegaram pelo gateway (ex.: Kiwify) sem UTM — não é possível atribuir a uma campanha.
+        </div>` : ''}
+
         ${summaryHtml}
 
         <h2 class="section-title" id="projetos">Projetos</h2>

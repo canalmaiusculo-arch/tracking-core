@@ -120,6 +120,22 @@ body {
   max-width: 920px;
 }
 
+.alert {
+  padding: 0.85rem 1.25rem;
+  border-radius: var(--radius);
+  margin-bottom: 1.25rem;
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
+.alert-warning {
+  background: rgba(234, 179, 8, 0.15);
+  border: 1px solid rgba(234, 179, 8, 0.4);
+  color: #eab308;
+}
+
+.alert-warning strong { color: #facc15; }
+
 .section-header {
   display: flex;
   align-items: center;
