@@ -195,8 +195,9 @@ const CONVERSION_CATALOG = [
 ];
 
 function conversionLabelWithTooltip(c) {
-  const tipPlain = (c.tooltip || '').replace(/<[^>]+>/g, ' ').replace(/&quot;/g, '"').replace(/\s+/g, ' ').trim();
-  return `${escapeHtml(c.label)} <span class="conversion-tooltip" title="${escapeHtml(tipPlain)}" aria-label="Ajuda">?</span>`;
+  const tipPlain = (c.tooltip || '').replace(/<[^>]+>/g, ' ').replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/\s+/g, ' ').trim();
+  const tipAttr = (tipPlain || 'Ajuda').replace(/"/g, '&quot;');
+  return `${escapeHtml(c.label)} <span class="conversion-tooltip" data-tooltip="${tipAttr}" title="${escapeHtml(tipPlain)}" aria-label="Ajuda">?</span>`;
 }
 
 function buildConversionSnippet(conversionKey, baseUrl, apiKey) {
