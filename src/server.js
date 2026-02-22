@@ -216,6 +216,34 @@ async function getMetaConfig(projectId) {
   return null;
 }
 
+// Webhook de saída: notifica URL externa em compras (fire-and-forget)
+async function notifyOutgoingWebhook(projectId, normalizedEvent) {
+  if (normalizedEvent.event_name !== 'Purchase' || !pool) return;
+  let url;
+  try {
+    const r = await pool.query(
+      'SELECT webhook_out_url FROM projects WHERE id = $1 AND webhook_out_url IS NOT NULL AND webhook_out_url != \'\' LIMIT 1',
+      [projectId]
+    );
+    url = r.rows[0]?.webhook_out_url;
+  } catch (e) {
+    return;
+  }
+  if (!url) return;
+  const payload = {
+    event_name: normalizedEvent.event_name,
+    event_id: normalizedEvent.event_id,
+    order_id: normalizedEvent.order_id,
+    value: normalizedEvent.value,
+    currency: normalizedEvent.currency || 'BRL',
+    source: normalizedEvent.source,
+    created_at: normalizedEvent.created_at
+  };
+  axios.post(url, payload, { timeout: 8000, validateStatus: () => true }).catch((err) => {
+    console.warn('[tracking-core] Webhook de saída falhou:', err.message);
+  });
+}
+
 async function sendToMeta(normalizedEvent, req, projectId) {
   const meta = await getMetaConfig(projectId);
   if (!meta) {
@@ -417,6 +445,7 @@ app.post(
               [normalized.id, metaResult.ok ? 'sent' : 'failed']
             );
           }
+          if (normalized.event_name === 'Purchase') notifyOutgoingWebhook(projectId, normalized);
         }
 
         await client.query(
@@ -581,7 +610,7 @@ app.get('/painel', async (req, res) => {
   let projects = [];
   try {
     const r = await pool.query(
-      `SELECT p.id, p.name, p.api_key_public, p.api_key_secret,
+      `SELECT p.id, p.name, p.api_key_public, p.api_key_secret, p.webhook_out_url,
               EXISTS(SELECT 1 FROM integrations_meta m WHERE m.project_id = p.id AND m.active) AS has_meta
        FROM projects p
        WHERE p.status = 'active'
@@ -592,6 +621,7 @@ app.get('/painel', async (req, res) => {
       name: row.name,
       api_key_public: row.api_key_public,
       api_key_secret: row.api_key_secret,
+      webhook_out_url: row.webhook_out_url || '',
       has_meta: row.has_meta,
       script_snippet: `<script src="${baseUrl}/sdk/browser-tracker.js"></script>
 <script>
@@ -666,10 +696,11 @@ app.get('/painel', async (req, res) => {
         <div class="card-actions">
           <a href="/painel/events/${escapeHtml(p.id)}?key=${encodeURIComponent(adminKey || '')}" class="btn btn-sm">Ver eventos</a>
           <button type="button" class="btn btn-sm btn-test-event" data-id="${escapeHtml(p.id)}">Testar evento</button>
-          <button type="button" class="btn btn-sm btn-edit" data-id="${escapeHtml(p.id)}" data-name="${escapeHtml(p.name)}">Editar</button>
+          <button type="button" class="btn btn-sm btn-edit" data-id="${escapeHtml(p.id)}" data-name="${escapeHtml(p.name)}" data-webhook-out="${escapeHtml(p.webhook_out_url || '')}">Editar</button>
           <button type="button" class="btn btn-sm btn-danger btn-deactivate" data-id="${escapeHtml(p.id)}" data-name="${escapeHtml(p.name)}">Desativar</button>
         </div>
       </div>
+      ${p.webhook_out_url ? `<span class="label">Webhook de saída (compras)</span><p style="margin:0 0 1rem 0;font-size:0.85rem;"><code>${escapeHtml(p.webhook_out_url)}</code></p>` : ''}
       <span class="label">Chave pública</span>
       <p style="margin:0 0 1rem 0;"><code>${escapeHtml(p.api_key_public)}</code></p>
       <span class="label">Script para o cabeçalho</span>
@@ -751,6 +782,8 @@ app.get('/painel', async (req, res) => {
           <input type="password" name="access_token" id="editAccessToken" placeholder="Deixe em branco para não alterar">
           <span class="label">Test Event Code (opcional)</span>
           <input type="text" name="test_event_code" id="editTestEventCode">
+          <span class="label">URL webhook de saída (compras) – opcional</span>
+          <input type="text" name="webhook_out_url" id="editWebhookOutUrl" placeholder="https://seu-crm.com/webhook">
           <button type="submit" class="btn btn-primary">Salvar</button>
         </form>
       </div>
@@ -800,6 +833,7 @@ app.get('/painel', async (req, res) => {
         document.getElementById('editPixelId').value = '';
         document.getElementById('editAccessToken').value = '';
         document.getElementById('editTestEventCode').value = '';
+        document.getElementById('editWebhookOutUrl').value = btn.getAttribute('data-webhook-out') || '';
         modalEdit.classList.add('show');
       });
     });
@@ -815,6 +849,8 @@ app.get('/painel', async (req, res) => {
       if (tok) payload.access_token = tok;
       var tec = document.getElementById('editTestEventCode').value.trim();
       if (tec) payload.test_event_code = tec;
+      var wout = document.getElementById('editWebhookOutUrl').value.trim();
+      payload.webhook_out_url = wout;
       var patchHeaders = { 'Content-Type': 'application/json' };
       if (adminKey) patchHeaders['X-Admin-Key'] = adminKey;
       fetch('/api/projects/' + encodeURIComponent(id), {
@@ -940,6 +976,7 @@ app.patch('/api/projects/:id', async (req, res) => {
   if (!pool) return res.status(503).json({ error: 'Banco não configurado' });
   const projectId = req.params.id;
   const name = req.body?.name?.trim();
+  const webhookOutUrl = req.body?.webhook_out_url;
   const pixelId = req.body?.pixel_id?.trim() || null;
   const accessToken = req.body?.access_token?.trim() || null;
   const testEventCode = req.body?.test_event_code?.trim() || null;
@@ -953,6 +990,13 @@ app.patch('/api/projects/:id', async (req, res) => {
       if (upd.rowCount === 0) {
         return res.status(404).json({ error: 'Projeto não encontrado' });
       }
+    }
+    if (webhookOutUrl !== undefined) {
+      const wUpd = await pool.query(
+        'UPDATE projects SET webhook_out_url = $2 WHERE id = $1 AND status = $3 RETURNING id',
+        [projectId, (webhookOutUrl && String(webhookOutUrl).trim()) || null, 'active']
+      );
+      if (wUpd.rowCount === 0 && !name) return res.status(404).json({ error: 'Projeto não encontrado' });
     }
     if (pixelId !== undefined && accessToken !== undefined) {
       const r = await pool.query(
@@ -1220,6 +1264,7 @@ app.post(
           [normalized.id, metaResult.ok ? 'sent' : 'failed']
         );
       }
+      if (normalized.event_name === 'Purchase') notifyOutgoingWebhook(projectId, normalized);
     }
 
     await client.query(`UPDATE raw_events SET status = $2 WHERE id = $1`, [rawId, 'processed']);

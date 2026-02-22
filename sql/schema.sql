@@ -12,13 +12,14 @@ CREATE TABLE IF NOT EXISTS tenants (
 
 -- Projetos (funis / sites) de cada cliente
 CREATE TABLE IF NOT EXISTS projects (
-  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  tenant_id       UUID NOT NULL REFERENCES tenants(id),
-  name            TEXT NOT NULL,
-  api_key_public  TEXT NOT NULL UNIQUE,
-  api_key_secret  TEXT NOT NULL,
-  status          TEXT NOT NULL DEFAULT 'active',
-  created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id        UUID NOT NULL REFERENCES tenants(id),
+  name             TEXT NOT NULL,
+  api_key_public   TEXT NOT NULL UNIQUE,
+  api_key_secret   TEXT NOT NULL,
+  status           TEXT NOT NULL DEFAULT 'active',
+  webhook_out_url  TEXT,  -- URL para notificar em compras (webhook de saída)
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- Integração com Meta por projeto
