@@ -4,6 +4,7 @@
   "description": "White-label tracking core: ponte confiável entre funis/gateways e Meta (Conversions API).",
   "main": "src/server.js",
   "type": "module",
+  "engines": { "node": ">=18" },
   "scripts": {
     "start": "node src/server.js",
     "dev": "NODE_ENV=development node src/server.js"
