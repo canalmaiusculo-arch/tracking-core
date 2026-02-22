@@ -1,0 +1,20 @@
+{
+  "name": "tracking-core",
+  "version": "0.1.0",
+  "description": "White-label tracking core: ponte confiável entre funis/gateways e Meta (Conversions API).",
+  "main": "src/server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "NODE_ENV=development node src/server.js"
+  },
+  "dependencies": {
+    "axios": "^1.6.7",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.0",
+    "express": "^4.19.0",
+    "pg": "^8.11.5",
+    "uuid": "^9.0.1"
+  }
+}
+
