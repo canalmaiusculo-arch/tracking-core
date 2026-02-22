@@ -127,6 +127,61 @@ function csvEscape(s) {
   return str;
 }
 
+/** Layout compartilhado do painel: sidebar (Dashboard, Pixel, Projetos) + área principal */
+function painelLayout(opts) {
+  const { activeNav = 'dashboard', title = 'Painel', headerRight = '', content = '', adminKey = '', extraScripts = '' } = opts;
+  const q = (adminKey ? '?key=' + encodeURIComponent(adminKey) : '');
+  const href = (path) => path + (path.indexOf('?') !== -1 ? (adminKey ? '&key=' + encodeURIComponent(adminKey) : '') : q);
+  const link = (path, label, nav) =>
+    `<a href="${href(path)}" class="sidebar-link${nav === activeNav ? ' active' : ''}">${escapeHtml(label)}</a>`;
+  const sidebarHtml = `
+    <div class="sidebar-logo">Tracking Core</div>
+    <nav class="sidebar-nav">
+      <span class="sidebar-nav-group">Menu</span>
+      ${link('/painel', 'Dashboard', 'dashboard')}
+      <span class="sidebar-nav-group">Conexões</span>
+      ${link('/painel/pixel', 'Pixel', 'pixel')}
+      <span class="sidebar-nav-group">Dados</span>
+      ${link('/painel/projetos', 'Projetos', 'projetos')}
+    </nav>
+    <a href="/logout" class="sidebar-link sidebar-logout">Sair</a>`;
+  return `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${escapeHtml(title)} – Tracking Core</title>
+  <link rel="stylesheet" href="/public/painel.css">
+</head>
+<body>
+  <div class="dashboard-wrap" id="dashboardWrap">
+    <div class="sidebar-overlay" id="sidebarOverlay" aria-hidden="true"></div>
+    <aside class="dashboard-sidebar">${sidebarHtml}</aside>
+    <main class="dashboard-main">
+      <header class="dashboard-header">
+        <button type="button" class="btn-hamburger" id="btnHamburger" aria-label="Abrir menu">≡</button>
+        <h1 class="dashboard-title">${escapeHtml(title)}</h1>
+        <div class="dashboard-header-right">${headerRight}</div>
+      </header>
+      <div class="dashboard-content">${content}</div>
+    </main>
+  </div>
+  <script>
+    (function() {
+      var wrap = document.getElementById('dashboardWrap');
+      var overlay = document.getElementById('sidebarOverlay');
+      var hamburger = document.getElementById('btnHamburger');
+      if (wrap && overlay && hamburger) {
+        hamburger.addEventListener('click', function() { wrap.classList.toggle('sidebar-open'); });
+        overlay.addEventListener('click', function() { wrap.classList.remove('sidebar-open'); });
+        wrap.querySelectorAll('.sidebar-link').forEach(function(l) { l.addEventListener('click', function() { wrap.classList.remove('sidebar-open'); }); });
+      }
+    })();
+  </script>
+  ${extraScripts ? extraScripts + '\n  ' : ''}</body>
+</html>`;
+}
+
 // Cookie de sessão do painel (assinado, sem banco)
 const ADMIN_COOKIE_NAME = 'tracking_admin';
 const ADMIN_SESSION_MAX_AGE = 24 * 60 * 60; // 24h em segundos
@@ -757,11 +812,29 @@ app.get('/painel', async (req, res) => {
     // ignora
   }
 
+  let totalEvents = 0;
+  let totalPurchases = 0;
+  let totalValue = 0;
+  projects.forEach((p) => {
+    const s = statsByProject[p.id] || { total_events: 0, purchases: 0, total_value: 0 };
+    totalEvents += s.total_events;
+    totalPurchases += s.purchases;
+    totalValue += s.total_value;
+  });
+  const totalValueStr = totalValue > 0 ? 'R$ ' + Number(totalValue).toFixed(2).replace('.', ',') : '0';
+  const kpiCardsHtml =
+    `<div class="kpi-grid">
+      <div class="kpi-card"><div class="kpi-card__value">${totalEvents}</div><div class="kpi-card__label">Eventos</div></div>
+      <div class="kpi-card"><div class="kpi-card__value">${totalPurchases}</div><div class="kpi-card__label">Compras</div></div>
+      <div class="kpi-card"><div class="kpi-card__value">${totalValueStr}</div><div class="kpi-card__label">Valor total</div></div>
+    </div>`;
+
   const summaryRows = projects
     .map((p) => {
       const s = statsByProject[p.id] || { total_events: 0, purchases: 0, total_value: 0 };
       const valueStr = s.total_value > 0 ? 'R$ ' + Number(s.total_value).toFixed(2).replace('.', ',') : '—';
-      return `<tr><td>${escapeHtml(p.name)}</td><td>${s.total_events}</td><td>${s.purchases}</td><td>${valueStr}</td></tr>`;
+      const eventsUrl = '/painel/events/' + p.id + (adminKey ? '?key=' + encodeURIComponent(adminKey) : '');
+      return `<tr><td>${escapeHtml(p.name)}</td><td>${s.total_events}</td><td>${s.purchases}</td><td>${valueStr}</td><td><a href="${escapeHtml(eventsUrl)}" class="btn btn-sm">Ver eventos</a></td></tr>`;
     })
     .join('');
   const periodQuery = period !== 'all' ? `?period=${period}` : '';
@@ -779,8 +852,8 @@ app.get('/painel', async (req, res) => {
     </div></div>
     <div class="dashboard-table-wrap">
     <table class="dashboard-table">
-      <thead><tr><th>Projeto</th><th>Eventos</th><th>Compras</th><th>Valor total</th></tr></thead>
-      <tbody>${summaryRows || '<tr><td colspan="4" class="events-empty">Nenhum projeto com eventos no período.</td></tr>'}</tbody>
+      <thead><tr><th>Projeto</th><th>Eventos</th><th>Compras</th><th>Valor total</th><th></th></tr></thead>
+      <tbody>${summaryRows || '<tr><td colspan="5" class="events-empty">Nenhum projeto com eventos no período.</td></tr>'}</tbody>
     </table>
     </div>
     ${utmRowsHtml ? `<h3 class="section-subtitle">Por campanha (UTM)</h3>
@@ -790,6 +863,110 @@ app.get('/painel', async (req, res) => {
       <tbody>${utmRowsHtml}</tbody>
     </table>
     </div>` : ''}`;
+
+  const dashboardContent =
+    (untrackedSalesCount > 0 ? `<div class="alert alert-warning" id="alert-untracked">
+      <strong>${untrackedSalesCount} venda${untrackedSalesCount !== 1 ? 's' : ''} não trackeada${untrackedSalesCount !== 1 ? 's' : ''}.</strong>
+      Compras que chegaram pelo gateway (ex.: Kiwify) sem UTM — não é possível atribuir a uma campanha.
+    </div>` : '') +
+    kpiCardsHtml +
+    summaryHtml;
+
+  const dashboardHeaderRight =
+    `<span class="dashboard-updated">Atualizado em ${new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</span>
+     <a href="/painel${period !== 'all' ? '?period=' + period : ''}${adminKey ? (period !== 'all' ? '&' : '?') + 'key=' + encodeURIComponent(adminKey) : ''}" class="btn btn-sm btn-primary">Atualizar</a>
+     <span class="dashboard-user">Admin</span>`;
+
+  const dashboardScripts = `
+  <script>
+    var adminKey = ${JSON.stringify(adminKey)};
+    var sel = document.getElementById('periodSelect');
+    if (sel) sel.addEventListener('change', function() {
+      var v = this.value;
+      var q = v !== 'all' ? '?period=' + v : '';
+      if (adminKey) q += (q ? '&' : '?') + 'key=' + encodeURIComponent(adminKey);
+      window.location.href = '/painel' + q;
+    });
+    document.querySelectorAll('.btn-save-cost').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        var row = btn.closest('tr');
+        if (!row) return;
+        var us = row.getAttribute('data-us') || '';
+        var um = row.getAttribute('data-um') || '';
+        var uc = row.getAttribute('data-uc') || '';
+        var input = row.querySelector('.input-cost');
+        var cost = input ? parseFloat(input.value) : 0;
+        if (Number.isNaN(cost)) cost = 0;
+        var headers = { 'Content-Type': 'application/json' };
+        if (adminKey) headers['X-Admin-Key'] = adminKey;
+        fetch('/api/campaign-cost', { method: 'PUT', headers: headers, credentials: 'same-origin',
+          body: JSON.stringify({ utm_source: us, utm_medium: um, utm_campaign: uc, cost: cost }) })
+          .then(function(r) {
+            if (r.ok) { window.location.reload(); return; }
+            return r.json().then(function(d) { throw new Error(d.error || 'Erro ao salvar'); });
+          }).catch(function(err) { alert(err.message); });
+      });
+    });
+  </script>`;
+
+  const html = painelLayout({
+    activeNav: 'dashboard',
+    title: 'Dashboard',
+    headerRight: dashboardHeaderRight,
+    content: dashboardContent,
+    adminKey,
+    extraScripts: dashboardScripts
+  });
+  res.type('html').send(html);
+});
+
+// Página Projetos: criar, listar, editar, ativar/desativar
+app.get('/painel/projetos', async (req, res) => {
+  if (!ADMIN_SECRET) return res.status(503).send('Painel desativado. Configure ADMIN_SECRET.');
+  if (!isAdminAuthorized(req)) return res.redirect(302, '/login');
+  if (!pool) return res.status(503).send('Banco não configurado.');
+  if (req.query.key === ADMIN_SECRET) setAdminCookie(res);
+  const baseUrl = BASE_URL || `${req.protocol}://${req.get('host')}`;
+  const adminKey = req.query.key || '';
+
+  let projects = [];
+  try {
+    const r = await pool.query(
+      `SELECT p.id, p.name, p.api_key_public, p.api_key_secret, p.webhook_out_url,
+              EXISTS(SELECT 1 FROM integrations_meta m WHERE m.project_id = p.id AND m.active) AS has_meta
+       FROM projects p WHERE p.status = 'active' ORDER BY p.created_at DESC`
+    );
+    projects = r.rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      api_key_public: row.api_key_public,
+      api_key_secret: row.api_key_secret,
+      webhook_out_url: row.webhook_out_url || '',
+      has_meta: row.has_meta,
+      script_snippet: `<script src="${baseUrl}/sdk/browser-tracker.js"></script>
+<script>
+  (function(){
+    var t = TrackingCore.createTracker({
+      endpoint: '${baseUrl}/events',
+      apiKey: '${row.api_key_public}'
+    });
+    t.trackPageView();
+  })();
+</script>`,
+      webhook_url: `${baseUrl}/webhooks/kiwify?project_key=${encodeURIComponent(row.api_key_secret)}`
+    }));
+  } catch (e) {
+    console.error('[tracking-core] Erro ao listar projetos:', e.message);
+    return res.status(500).send('Erro ao carregar projetos.');
+  }
+
+  let inactiveProjects = [];
+  try {
+    const rInactive = await pool.query(
+      `SELECT id, name FROM projects WHERE status = 'inactive' ORDER BY created_at DESC`
+    );
+    inactiveProjects = rInactive.rows;
+  } catch (e) {}
 
   const projectsHtml = projects
     .map(
@@ -833,67 +1010,26 @@ app.get('/painel', async (req, res) => {
     )
     .join('');
 
-  const html = `<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Painel – Tracking Core</title>
-  <link rel="stylesheet" href="/public/painel.css">
-</head>
-<body>
-  <div class="dashboard-wrap" id="dashboardWrap">
-    <div class="sidebar-overlay" id="sidebarOverlay" aria-hidden="true"></div>
-    <aside class="dashboard-sidebar">
-      <div class="sidebar-logo">Tracking Core</div>
-      <nav class="sidebar-nav">
-        <a href="#resumo" class="sidebar-link">Resumo</a>
-        <a href="#projetos" class="sidebar-link">Projetos</a>
-      </nav>
-      <a href="/logout" class="sidebar-link sidebar-logout">Sair</a>
-    </aside>
-    <main class="dashboard-main">
-      <header class="dashboard-header">
-        <button type="button" class="btn-hamburger" id="btnHamburger" aria-label="Abrir menu">≡</button>
-        <h1 class="dashboard-title">Dashboard</h1>
-        <div class="dashboard-header-right">
-          <span class="dashboard-updated">Atualizado em ${new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</span>
-          <a href="/painel${period !== 'all' ? '?period=' + period : ''}${adminKey ? (period !== 'all' ? '&' : '?') + 'key=' + encodeURIComponent(adminKey) : ''}" class="btn btn-sm btn-primary">Atualizar</a>
-          <span class="dashboard-user">Admin</span>
-        </div>
-      </header>
-      <div class="dashboard-content">
-        ${untrackedSalesCount > 0 ? `<div class="alert alert-warning" id="alert-untracked">
-          <strong>${untrackedSalesCount} venda${untrackedSalesCount !== 1 ? 's' : ''} não trackeada${untrackedSalesCount !== 1 ? 's' : ''}.</strong>
-          Compras que chegaram pelo gateway (ex.: Kiwify) sem UTM — não é possível atribuir a uma campanha.
-        </div>` : ''}
-
-        ${summaryHtml}
-
-        <h2 class="section-title" id="projetos">Projetos</h2>
-        <section class="form-card">
-          <h2>Novo projeto</h2>
-          <form id="formNovo">
-            <span class="label">Nome do projeto</span>
-            <input type="text" name="name" required placeholder="Ex: Meu funil">
-            <span class="label">Pixel ID (Meta) – opcional</span>
-            <input type="text" name="pixel_id" placeholder="Ex: 123456789">
-            <span class="label">Access Token (Meta) – opcional</span>
-            <input type="password" name="access_token" placeholder="Token de acesso">
-            <span class="label">Test Event Code (opcional)</span>
-            <input type="text" name="test_event_code" placeholder="">
-            <button type="submit" class="btn btn-primary">Criar projeto</button>
-          </form>
-        </section>
-
-        <h3 class="section-subtitle">Projetos ativos</h3>
-        ${projects.length ? projectsHtml : '<div class="empty-state">Nenhum projeto ativo. Crie um acima ou reative um inativo.</div>'}
-
-        ${inactiveProjects.length ? `<h3 class="section-subtitle">Projetos inativos</h3>${inactiveHtml}` : ''}
-
-        <div id="toast" class="toast" style="display:none;"></div>
-
-        <div id="modalEdit" class="modal">
+  const projetosContent = `
+    <section class="form-card">
+      <h2>Novo projeto</h2>
+      <form id="formNovo">
+        <span class="label">Nome do projeto</span>
+        <input type="text" name="name" required placeholder="Ex: Meu funil">
+        <span class="label">Pixel ID (Meta) – opcional</span>
+        <input type="text" name="pixel_id" placeholder="Ex: 123456789">
+        <span class="label">Access Token (Meta) – opcional</span>
+        <input type="password" name="access_token" placeholder="Token de acesso">
+        <span class="label">Test Event Code (opcional)</span>
+        <input type="text" name="test_event_code" placeholder="">
+        <button type="submit" class="btn btn-primary">Criar projeto</button>
+      </form>
+    </section>
+    <h3 class="section-subtitle">Projetos ativos</h3>
+    ${projects.length ? projectsHtml : '<div class="empty-state">Nenhum projeto ativo. Crie um acima ou reative um inativo.</div>'}
+    ${inactiveProjects.length ? `<h3 class="section-subtitle">Projetos inativos</h3>${inactiveHtml}` : ''}
+    <div id="toast" class="toast" style="display:none;"></div>
+    <div id="modalEdit" class="modal">
       <div class="modal-content">
         <span class="modal-close" id="modalEditClose" aria-label="Fechar">&times;</span>
         <h2>Editar projeto</h2>
@@ -912,57 +1048,11 @@ app.get('/painel', async (req, res) => {
           <button type="submit" class="btn btn-primary">Salvar</button>
         </form>
       </div>
-    </div>
-      </div>
-    </main>
-  </div>
+    </div>`;
 
+  const projetosScripts = `
   <script>
-    (function() {
-      var wrap = document.getElementById('dashboardWrap');
-      var overlay = document.getElementById('sidebarOverlay');
-      var hamburger = document.getElementById('btnHamburger');
-      if (wrap && overlay && hamburger) {
-        hamburger.addEventListener('click', function() { wrap.classList.toggle('sidebar-open'); });
-        overlay.addEventListener('click', function() { wrap.classList.remove('sidebar-open'); });
-        wrap.querySelectorAll('.sidebar-link').forEach(function(link) {
-          link.addEventListener('click', function() { wrap.classList.remove('sidebar-open'); });
-        });
-      }
-    })();
     var adminKey = ${JSON.stringify(adminKey)};
-    var periodQuery = ${JSON.stringify(periodQuery)};
-    var sel = document.getElementById('periodSelect');
-    if (sel) sel.addEventListener('change', function() {
-      var v = this.value;
-      var q = v !== 'all' ? '?period=' + v : '';
-      if (adminKey) q += (q ? '&' : '?') + 'key=' + encodeURIComponent(adminKey);
-      window.location.href = '/painel' + q;
-    });
-
-    document.querySelectorAll('.btn-save-cost').forEach(function(btn) {
-      btn.addEventListener('click', function() {
-        var row = btn.closest('tr');
-        if (!row) return;
-        var us = row.getAttribute('data-us') || '';
-        var um = row.getAttribute('data-um') || '';
-        var uc = row.getAttribute('data-uc') || '';
-        var input = row.querySelector('.input-cost');
-        var cost = input ? parseFloat(input.value) : 0;
-        if (Number.isNaN(cost)) cost = 0;
-        var headers = { 'Content-Type': 'application/json' };
-        if (adminKey) headers['X-Admin-Key'] = adminKey;
-        fetch('/api/campaign-cost', {
-          method: 'PUT',
-          headers: headers,
-          credentials: 'same-origin',
-          body: JSON.stringify({ utm_source: us, utm_medium: um, utm_campaign: uc, cost: cost })
-        }).then(function(r) {
-          if (r.ok) { window.location.reload(); return; }
-          return r.json().then(function(d) { throw new Error(d.error || 'Erro ao salvar'); });
-        }).catch(function(err) { alert(err.message); });
-      });
-    });
     document.querySelectorAll('[data-copy]').forEach(function(btn) {
       btn.addEventListener('click', function() {
         var text = btn.getAttribute('data-copy');
@@ -982,19 +1072,13 @@ app.get('/painel', async (req, res) => {
       if (fd.get('access_token')) payload.access_token = fd.get('access_token');
       if (fd.get('test_event_code')) payload.test_event_code = fd.get('test_event_code');
       var apiHeaders = { 'Content-Type': 'application/json' };
-    if (adminKey) apiHeaders['X-Admin-Key'] = adminKey;
-    fetch('/api/projects', {
-        method: 'POST',
-        headers: apiHeaders,
-        credentials: 'same-origin',
-        body: JSON.stringify(payload)
-      }).then(function(r) {
-        if (r.ok) return r.json();
-        throw new Error(r.status === 401 ? 'Chave de admin inválida' : 'Erro ao criar projeto');
-      }).then(function() { window.location.reload(); })
-        .catch(function(err) { alert(err.message); });
+      if (adminKey) apiHeaders['X-Admin-Key'] = adminKey;
+      fetch('/api/projects', { method: 'POST', headers: apiHeaders, credentials: 'same-origin', body: JSON.stringify(payload) })
+        .then(function(r) {
+          if (r.ok) return r.json();
+          throw new Error(r.status === 401 ? 'Chave de admin inválida' : 'Erro ao criar projeto');
+        }).then(function() { window.location.reload(); }).catch(function(err) { alert(err.message); });
     });
-
     var modalEdit = document.getElementById('modalEdit');
     var formEdit = document.getElementById('formEdit');
     document.querySelectorAll('.btn-edit').forEach(function(btn) {
@@ -1020,75 +1104,121 @@ app.get('/painel', async (req, res) => {
       if (tok) payload.access_token = tok;
       var tec = document.getElementById('editTestEventCode').value.trim();
       if (tec) payload.test_event_code = tec;
-      var wout = document.getElementById('editWebhookOutUrl').value.trim();
-      payload.webhook_out_url = wout;
+      payload.webhook_out_url = document.getElementById('editWebhookOutUrl').value.trim();
       var patchHeaders = { 'Content-Type': 'application/json' };
       if (adminKey) patchHeaders['X-Admin-Key'] = adminKey;
-      fetch('/api/projects/' + encodeURIComponent(id), {
-        method: 'PATCH',
-        headers: patchHeaders,
-        credentials: 'same-origin',
-        body: JSON.stringify(payload)
-      }).then(function(r) {
-        if (r.ok) { modalEdit.classList.remove('show'); window.location.reload(); return; }
-        return r.json().then(function(d) { throw new Error(d.error || 'Erro ao salvar'); });
-      }).catch(function(err) { alert(err.message); });
+      fetch('/api/projects/' + encodeURIComponent(id), { method: 'PATCH', headers: patchHeaders, credentials: 'same-origin', body: JSON.stringify(payload) })
+        .then(function(r) {
+          if (r.ok) { modalEdit.classList.remove('show'); window.location.reload(); return; }
+          return r.json().then(function(d) { throw new Error(d.error || 'Erro ao salvar'); });
+        }).catch(function(err) { alert(err.message); });
     });
-
     document.querySelectorAll('.btn-deactivate').forEach(function(btn) {
       btn.addEventListener('click', function() {
-        if (!confirm('Desativar o projeto \"' + (btn.getAttribute('data-name') || '') + '\"? O script e o webhook pararão de aceitar eventos.')) return;
+        if (!confirm('Desativar o projeto \\"' + (btn.getAttribute('data-name') || '') + '\\"? O script e o webhook pararão de aceitar eventos.')) return;
         var id = btn.getAttribute('data-id');
-        var logoutHeaders = {};
-      if (adminKey) logoutHeaders['X-Admin-Key'] = adminKey;
-      fetch('/api/projects/' + encodeURIComponent(id) + '/deactivate', {
-          method: 'POST',
-          headers: logoutHeaders,
-          credentials: 'same-origin'
-        }).then(function(r) {
-          if (r.ok) { window.location.reload(); return; }
-          return r.json().then(function(d) { throw new Error(d.error || 'Erro ao desativar'); });
-        }).catch(function(err) { alert(err.message); });
+        var headers = {};
+        if (adminKey) headers['X-Admin-Key'] = adminKey;
+        fetch('/api/projects/' + encodeURIComponent(id) + '/deactivate', { method: 'POST', headers: headers, credentials: 'same-origin' })
+          .then(function(r) {
+            if (r.ok) { window.location.reload(); return; }
+            return r.json().then(function(d) { throw new Error(d.error || 'Erro ao desativar'); });
+          }).catch(function(err) { alert(err.message); });
       });
     });
-
     document.querySelectorAll('.btn-activate').forEach(function(btn) {
       btn.addEventListener('click', function() {
         var id = btn.getAttribute('data-id');
         var headers = {};
         if (adminKey) headers['X-Admin-Key'] = adminKey;
-        fetch('/api/projects/' + encodeURIComponent(id) + '/activate', {
-          method: 'POST',
-          headers: headers,
-          credentials: 'same-origin'
-        }).then(function(r) {
-          if (r.ok) { window.location.reload(); return; }
-          return r.json().then(function(d) { throw new Error(d.error || 'Erro ao reativar'); });
-        }).catch(function(err) { alert(err.message); });
+        fetch('/api/projects/' + encodeURIComponent(id) + '/activate', { method: 'POST', headers: headers, credentials: 'same-origin' })
+          .then(function(r) {
+            if (r.ok) { window.location.reload(); return; }
+            return r.json().then(function(d) { throw new Error(d.error || 'Erro ao reativar'); });
+          }).catch(function(err) { alert(err.message); });
       });
     });
-
     document.querySelectorAll('.btn-test-event').forEach(function(btn) {
       btn.addEventListener('click', function() {
         var id = btn.getAttribute('data-id');
         var headers = {};
         if (adminKey) headers['X-Admin-Key'] = adminKey;
         btn.disabled = true;
-        fetch('/api/projects/' + encodeURIComponent(id) + '/test-event', {
-          method: 'POST',
-          headers: headers,
-          credentials: 'same-origin'
-        }).then(function(r) { return r.json().then(function(d) { return { ok: r.ok, data: d }; }); }).then(function(o) {
-          btn.disabled = false;
-          var t = document.getElementById('toast');
-          if (o.ok) { t.textContent = 'Evento de teste enviado!'; t.style.display = 'block'; setTimeout(function() { t.style.display = 'none'; }, 3000); }
-          else { alert(o.data.error || 'Erro ao enviar evento'); }
-        }).catch(function(err) { btn.disabled = false; alert(err.message); });
+        fetch('/api/projects/' + encodeURIComponent(id) + '/test-event', { method: 'POST', headers: headers, credentials: 'same-origin' })
+          .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, data: d }; }); })
+          .then(function(o) {
+            btn.disabled = false;
+            var t = document.getElementById('toast');
+            if (o.ok) { t.textContent = 'Evento de teste enviado!'; t.style.display = 'block'; setTimeout(function() { t.style.display = 'none'; }, 3000); }
+            else { alert(o.data.error || 'Erro ao enviar evento'); }
+          }).catch(function(err) { btn.disabled = false; alert(err.message); });
       });
     });
-  </script>
-</body>
-</html>`;
+  </script>`;
+
+  const html = painelLayout({
+    activeNav: 'projetos',
+    title: 'Projetos',
+    headerRight: '<span class="dashboard-user">Admin</span>',
+    content: projetosContent,
+    adminKey,
+    extraScripts: projetosScripts
+  });
+  res.type('html').send(html);
+});
+
+// Página Pixel: listar conexões Meta e conectar/editar pixel por projeto
+app.get('/painel/pixel', async (req, res) => {
+  if (!ADMIN_SECRET) return res.status(503).send('Painel desativado.');
+  if (!isAdminAuthorized(req)) return res.redirect(302, '/login');
+  if (!pool) return res.status(503).send('Banco não configurado.');
+  if (req.query.key === ADMIN_SECRET) setAdminCookie(res);
+  const adminKey = req.query.key || '';
+
+  let pixels = [];
+  try {
+    const r = await pool.query(
+      `SELECT p.id AS project_id, p.name AS project_name,
+              m.pixel_id, m.test_event_code, m.active
+       FROM projects p
+       LEFT JOIN integrations_meta m ON m.project_id = p.id AND m.active = true
+       WHERE p.status = 'active'
+       ORDER BY p.name`
+    );
+    pixels = r.rows;
+  } catch (e) {
+    console.error('[tracking-core] Erro ao listar pixels:', e.message);
+    return res.status(500).send('Erro ao carregar conexões.');
+  }
+
+  const rows = pixels
+    .map(
+      (row) => `
+    <tr>
+      <td>${escapeHtml(row.project_name)}</td>
+      <td>${row.pixel_id ? escapeHtml(row.pixel_id) : '<span class="text-muted">—</span>'}</td>
+      <td>${row.pixel_id ? '<span class="badge">Conectado</span>' : '<span class="badge badge-inactive">Não conectado</span>'}</td>
+      <td><a href="/painel/projetos${adminKey ? '?key=' + encodeURIComponent(adminKey) : ''}" class="btn btn-sm">${row.pixel_id ? 'Editar' : 'Conectar'}</a></td>
+    </tr>`
+    )
+    .join('');
+
+  const pixelContent = `
+    <p class="dashboard-lead">Conexões Meta (Pixel) por projeto. Para conectar ou alterar um pixel, use <strong>Conectar</strong> ou <strong>Editar</strong> e preencha na página de Projetos (ao editar o projeto) ou conecte ao criar um novo projeto.</p>
+    <div class="dashboard-table-wrap">
+      <table class="dashboard-table">
+        <thead><tr><th>Projeto</th><th>Pixel ID</th><th>Status</th><th>Ações</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="4" class="events-empty">Nenhum projeto ativo.</td></tr>'}</tbody>
+      </table>
+    </div>`;
+
+  const html = painelLayout({
+    activeNav: 'pixel',
+    title: 'Pixel',
+    headerRight: '<span class="dashboard-user">Admin</span>',
+    content: pixelContent,
+    adminKey
+  });
   res.type('html').send(html);
 });
 

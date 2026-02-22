@@ -81,6 +81,23 @@ body {
   color: var(--accent);
 }
 
+.sidebar-link.active {
+  color: var(--accent);
+  background: rgba(99, 102, 241, 0.12);
+  font-weight: 500;
+}
+
+.sidebar-nav-group {
+  display: block;
+  padding: 0.75rem 1.25rem 0.25rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  opacity: 0.85;
+}
+
 .sidebar-logout {
   margin-top: auto;
   border-top: 1px solid var(--border);
@@ -125,6 +142,14 @@ body {
   font-size: 0.85rem;
   color: var(--text-muted);
 }
+
+.dashboard-lead {
+  color: var(--text-muted);
+  margin-bottom: 1.5rem;
+  max-width: 56em;
+}
+
+.text-muted { color: var(--text-muted); }
 
 .events-header-actions {
   display: flex;
@@ -382,6 +407,34 @@ input:focus {
 }
 
 .form-card .btn-primary { margin-top: 0.25rem; }
+
+/* Dashboard KPIs */
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.kpi-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1rem;
+}
+
+.kpi-card__value {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.kpi-card__label {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin-top: 0.25rem;
+}
 
 /* Section title */
 .section-title {
