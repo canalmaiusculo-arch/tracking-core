@@ -120,6 +120,13 @@ function escapeHtml(s) {
     .replace(/"/g, '&quot;');
 }
 
+function csvEscape(s) {
+  if (s == null) return '';
+  const str = String(s);
+  if (/[",\r\n]/.test(str)) return '"' + str.replace(/"/g, '""') + '"';
+  return str;
+}
+
 // Cookie de sessão do painel (assinado, sem banco)
 const ADMIN_COOKIE_NAME = 'tracking_admin';
 const ADMIN_SESSION_MAX_AGE = 24 * 60 * 60; // 24h em segundos
@@ -758,23 +765,31 @@ app.get('/painel', async (req, res) => {
     })
     .join('');
   const periodQuery = period !== 'all' ? `?period=${period}` : '';
+  const exportResumoUrl = '/painel/export/resumo?' + (period !== 'all' ? 'period=' + period + '&' : '') + (adminKey ? 'key=' + encodeURIComponent(adminKey) : '');
   const summaryHtml =
     `<div class="section-header"><h2 class="section-title" id="resumo">Resumo</h2>
-    <select id="periodSelect" class="period-select" title="Período">
-      <option value="all" ${period === 'all' ? 'selected' : ''}>Todo o período</option>
-      <option value="1d" ${period === '1d' ? 'selected' : ''}>Últimas 24h</option>
-      <option value="7d" ${period === '7d' ? 'selected' : ''}>Últimos 7 dias</option>
-      <option value="30d" ${period === '30d' ? 'selected' : ''}>Últimos 30 dias</option>
-    </select></div>
+    <div class="section-header-actions">
+      <select id="periodSelect" class="period-select" title="Período">
+        <option value="all" ${period === 'all' ? 'selected' : ''}>Todo o período</option>
+        <option value="1d" ${period === '1d' ? 'selected' : ''}>Últimas 24h</option>
+        <option value="7d" ${period === '7d' ? 'selected' : ''}>Últimos 7 dias</option>
+        <option value="30d" ${period === '30d' ? 'selected' : ''}>Últimos 30 dias</option>
+      </select>
+      <a href="${escapeHtml(exportResumoUrl)}" class="btn btn-sm">Exportar resumo (CSV)</a>
+    </div></div>
+    <div class="dashboard-table-wrap">
     <table class="dashboard-table">
       <thead><tr><th>Projeto</th><th>Eventos</th><th>Compras</th><th>Valor total</th></tr></thead>
       <tbody>${summaryRows || '<tr><td colspan="4" class="events-empty">Nenhum projeto com eventos no período.</td></tr>'}</tbody>
     </table>
+    </div>
     ${utmRowsHtml ? `<h3 class="section-subtitle">Por campanha (UTM)</h3>
+    <div class="dashboard-table-wrap">
     <table class="dashboard-table dashboard-table-utm">
       <thead><tr><th>utm_source</th><th>utm_medium</th><th>utm_campaign</th><th>Compras</th><th>Valor</th><th>Custo (R$)</th><th>CPA</th><th>ROAS</th><th></th></tr></thead>
       <tbody>${utmRowsHtml}</tbody>
-    </table>` : ''}`;
+    </table>
+    </div>` : ''}`;
 
   const projectsHtml = projects
     .map(
@@ -827,7 +842,8 @@ app.get('/painel', async (req, res) => {
   <link rel="stylesheet" href="/public/painel.css">
 </head>
 <body>
-  <div class="dashboard-wrap">
+  <div class="dashboard-wrap" id="dashboardWrap">
+    <div class="sidebar-overlay" id="sidebarOverlay" aria-hidden="true"></div>
     <aside class="dashboard-sidebar">
       <div class="sidebar-logo">Tracking Core</div>
       <nav class="sidebar-nav">
@@ -838,6 +854,7 @@ app.get('/painel', async (req, res) => {
     </aside>
     <main class="dashboard-main">
       <header class="dashboard-header">
+        <button type="button" class="btn-hamburger" id="btnHamburger" aria-label="Abrir menu">≡</button>
         <h1 class="dashboard-title">Dashboard</h1>
         <div class="dashboard-header-right">
           <span class="dashboard-updated">Atualizado em ${new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</span>
@@ -901,6 +918,18 @@ app.get('/painel', async (req, res) => {
   </div>
 
   <script>
+    (function() {
+      var wrap = document.getElementById('dashboardWrap');
+      var overlay = document.getElementById('sidebarOverlay');
+      var hamburger = document.getElementById('btnHamburger');
+      if (wrap && overlay && hamburger) {
+        hamburger.addEventListener('click', function() { wrap.classList.toggle('sidebar-open'); });
+        overlay.addEventListener('click', function() { wrap.classList.remove('sidebar-open'); });
+        wrap.querySelectorAll('.sidebar-link').forEach(function(link) {
+          link.addEventListener('click', function() { wrap.classList.remove('sidebar-open'); });
+        });
+      }
+    })();
     var adminKey = ${JSON.stringify(adminKey)};
     var periodQuery = ${JSON.stringify(periodQuery)};
     var sel = document.getElementById('periodSelect');
@@ -1061,6 +1090,109 @@ app.get('/painel', async (req, res) => {
 </body>
 </html>`;
   res.type('html').send(html);
+});
+
+// Exportar resumo (projetos + UTM) em CSV
+app.get('/painel/export/resumo', async (req, res) => {
+  if (!ADMIN_SECRET) return res.status(503).send('Painel desativado.');
+  if (!isAdminAuthorized(req)) return res.redirect(302, '/login');
+  if (!pool) return res.status(503).send('Banco não configurado.');
+  const period = req.query.period || 'all';
+  let dateFrom = null;
+  if (period === '1d') dateFrom = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  else if (period === '7d') dateFrom = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  else if (period === '30d') dateFrom = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+
+  let projects = [];
+  try {
+    const r = await pool.query(
+      `SELECT id, name FROM projects WHERE status = 'active' ORDER BY created_at DESC`
+    );
+    projects = r.rows;
+  } catch (e) {
+    return res.status(500).send('Erro ao carregar projetos.');
+  }
+  let statsByProject = {};
+  try {
+    const dateCondition = dateFrom ? ' AND created_at >= $1' : '';
+    const params = dateFrom ? [dateFrom.toISOString()] : [];
+    const rStats = await pool.query(
+      `SELECT project_id, COUNT(*) AS total_events,
+              COUNT(*) FILTER (WHERE event_name = 'Purchase') AS purchases,
+              COALESCE(SUM(value) FILTER (WHERE event_name = 'Purchase'), 0) AS total_value
+       FROM normalized_events WHERE 1=1${dateCondition} GROUP BY project_id`,
+      params
+    );
+    rStats.rows.forEach((row) => {
+      statsByProject[row.project_id] = {
+        total_events: parseInt(row.total_events, 10),
+        purchases: parseInt(row.purchases, 10),
+        total_value: parseFloat(row.total_value) || 0
+      };
+    });
+  } catch (e) {
+    // ignora
+  }
+  let costByUtm = {};
+  try {
+    const rCost = await pool.query('SELECT utm_source, utm_medium, utm_campaign, cost FROM campaign_costs');
+    rCost.rows.forEach((row) => {
+      const key = [row.utm_source, row.utm_medium, row.utm_campaign].join('\0');
+      costByUtm[key] = parseFloat(row.cost) || 0;
+    });
+  } catch (e) {
+    // ignora
+  }
+  let utmData = [];
+  try {
+    const dateCondUtm = dateFrom ? ' AND created_at >= $1' : '';
+    const utmParams = dateFrom ? [dateFrom.toISOString()] : [];
+    const rUtm = await pool.query(
+      `SELECT COALESCE(context->>'utm_source', '—') AS utm_source,
+              COALESCE(context->>'utm_medium', '—') AS utm_medium,
+              COALESCE(context->>'utm_campaign', '—') AS utm_campaign,
+              COUNT(*) AS purchases, COALESCE(SUM(value), 0) AS total_value
+       FROM normalized_events
+       WHERE event_name = 'Purchase'${dateCondUtm}
+       GROUP BY context->>'utm_source', context->>'utm_medium', context->>'utm_campaign'
+       ORDER BY total_value DESC LIMIT 50`,
+      utmParams
+    );
+    utmData = rUtm.rows.map((row) => {
+      const purchases = parseInt(row.purchases, 10) || 0;
+      const v = parseFloat(row.total_value) || 0;
+      const key = [row.utm_source, row.utm_medium, row.utm_campaign].join('\0');
+      const cost = costByUtm[key] ?? 0;
+      const cpa = cost > 0 && purchases > 0 ? cost / purchases : null;
+      const roas = cost > 0 && v > 0 ? v / cost : null;
+      return { ...row, cost, cpa, roas };
+    });
+  } catch (e) {
+    // ignora
+  }
+
+  const rows = [];
+  rows.push('Resumo por projeto');
+  rows.push('Projeto;Eventos;Compras;Valor total');
+  projects.forEach((p) => {
+    const s = statsByProject[p.id] || { total_events: 0, purchases: 0, total_value: 0 };
+    const valueStr = s.total_value > 0 ? Number(s.total_value).toFixed(2).replace('.', ',') : '';
+    rows.push([csvEscape(p.name), s.total_events, s.purchases, valueStr].join(';'));
+  });
+  rows.push('');
+  rows.push('Por campanha (UTM)');
+  rows.push('utm_source;utm_medium;utm_campaign;Compras;Valor;Custo;CPA;ROAS');
+  utmData.forEach((row) => {
+    const vStr = row.total_value > 0 ? Number(row.total_value).toFixed(2).replace('.', ',') : '';
+    const costStr = row.cost > 0 ? Number(row.cost).toFixed(2).replace('.', ',') : '';
+    const cpaStr = row.cpa != null ? Number(row.cpa).toFixed(2).replace('.', ',') : '';
+    const roasStr = row.roas != null ? Number(row.roas).toFixed(2).replace('.', ',') : '';
+    rows.push([csvEscape(row.utm_source), csvEscape(row.utm_medium), csvEscape(row.utm_campaign), row.purchases, vStr, costStr, cpaStr, roasStr].join(';'));
+  });
+  const csv = '\uFEFF' + rows.join('\r\n');
+  const filename = 'resumo-' + (period !== 'all' ? period + '-' : '') + new Date().toISOString().slice(0, 10) + '.csv';
+  res.setHeader('Content-Disposition', 'attachment; filename="' + filename + '"');
+  res.type('text/csv; charset=utf-8').send(csv);
 });
 
 app.post('/api/projects', async (req, res) => {
@@ -1289,6 +1421,44 @@ app.get('/api/projects/:id/events', async (req, res) => {
   }
 });
 
+// Exportar eventos de um projeto em CSV
+app.get('/painel/events/:projectId/export', async (req, res) => {
+  if (!ADMIN_SECRET) return res.status(503).send('Painel desativado.');
+  if (!isAdminAuthorized(req)) return res.redirect(302, '/login');
+  if (!pool) return res.status(503).send('Banco não configurado.');
+  const { projectId } = req.params;
+  const period = req.query.period || 'all';
+  let dateFrom = null;
+  if (period === '1d') dateFrom = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  else if (period === '7d') dateFrom = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  else if (period === '30d') dateFrom = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  try {
+    const proj = await pool.query(
+      'SELECT id, name FROM projects WHERE id = $1 LIMIT 1',
+      [projectId]
+    );
+    if (!proj.rows[0]) return res.status(404).send('Projeto não encontrado.');
+    const dateCond = dateFrom ? ' AND created_at >= $2' : '';
+    const params = dateFrom ? [projectId, dateFrom.toISOString()] : [projectId];
+    const r = await pool.query(
+      `SELECT event_name, order_id, value, currency, source, status, created_at
+       FROM normalized_events WHERE project_id = $1${dateCond} ORDER BY created_at DESC LIMIT 500`,
+      params
+    );
+    const header = 'Data;Evento;Pedido;Valor;Moeda;Origem;Status';
+    const csvRows = r.rows.map((e) =>
+      [csvEscape(e.created_at), csvEscape(e.event_name), csvEscape(e.order_id || ''), e.value != null ? e.value : '', csvEscape(e.currency || ''), csvEscape(e.source), csvEscape(e.status)].join(';')
+    );
+    const csv = '\uFEFF' + [header, ...csvRows].join('\r\n');
+    const filename = 'eventos-' + projectId.slice(0, 8) + '-' + (period !== 'all' ? period + '-' : '') + new Date().toISOString().slice(0, 10) + '.csv';
+    res.setHeader('Content-Disposition', 'attachment; filename="' + filename + '"');
+    res.type('text/csv; charset=utf-8').send(csv);
+  } catch (err) {
+    console.error('[tracking-core] Erro ao exportar eventos:', err.message);
+    return res.status(500).send('Erro ao exportar.');
+  }
+});
+
 // Página do painel: últimos eventos de um projeto
 app.get('/painel/events/:projectId', async (req, res) => {
   if (!ADMIN_SECRET) return res.status(503).send('Painel desativado.');
@@ -1314,6 +1484,7 @@ app.get('/painel/events/:projectId', async (req, res) => {
        FROM normalized_events WHERE project_id = $1${dateCond} ORDER BY created_at DESC LIMIT 100`,
       params
     );
+    const exportCsvUrl = '/painel/events/' + projectId + '/export?' + (period !== 'all' ? 'period=' + period + '&' : '') + (adminKey ? 'key=' + encodeURIComponent(adminKey) : '');
     const rows = r.rows
       .map(
         (e) =>
@@ -1340,13 +1511,16 @@ app.get('/painel/events/:projectId', async (req, res) => {
           <option value="7d" ${period === '7d' ? 'selected' : ''}>Últimos 7 dias</option>
           <option value="30d" ${period === '30d' ? 'selected' : ''}>Últimos 30 dias</option>
         </select>
+        <a href="${escapeHtml(exportCsvUrl)}" class="btn btn-sm">Exportar CSV</a>
         <a href="/painel?key=${encodeURIComponent(adminKey)}${periodQuery}" class="btn btn-sm">← Voltar ao painel</a>
       </div>
     </div>
+    <div class="table-scroll">
     <table class="events-table">
       <thead><tr><th>Data</th><th>Evento</th><th>Pedido</th><th>Valor</th><th>Origem</th><th>Status</th></tr></thead>
       <tbody>${rows || '<tr><td colspan="6" class="events-empty">Nenhum evento no período.</td></tr>'}</tbody>
     </table>
+    </div>
   </div>
   <script>
     document.getElementById('eventsPeriodSelect').addEventListener('change', function() {
