@@ -252,9 +252,24 @@ async function sendToMeta(normalizedEvent, req, projectId) {
   }
 }
 
-// Rota /health para checagem simples
-app.get('/health', (req, res) => {
-  res.json({ ok: true, status: 'healthy', time: new Date().toISOString() });
+// Health: checa API, banco e (opcional) Meta
+app.get('/health', async (req, res) => {
+  const out = { ok: true, time: new Date().toISOString(), db: null, meta: null };
+  if (pool) {
+    try {
+      await pool.query('SELECT 1');
+      out.db = 'connected';
+    } catch (e) {
+      out.db = 'error';
+      out.ok = false;
+      out.db_error = e.message;
+    }
+  } else {
+    out.db = 'not_configured';
+  }
+  out.meta = hasMetaConfig ? 'configured' : 'not_configured';
+  const status = out.ok ? 200 : 503;
+  res.status(status).json(out);
 });
 
 // Rota /events (equivalente evoluída do MVP)
@@ -563,6 +578,16 @@ app.get('/painel', async (req, res) => {
     return res.status(500).send('Erro ao carregar projetos.');
   }
 
+  let inactiveProjects = [];
+  try {
+    const rInactive = await pool.query(
+      `SELECT id, name FROM projects WHERE status = 'inactive' ORDER BY created_at DESC`
+    );
+    inactiveProjects = rInactive.rows;
+  } catch (e) {
+    // ignora; lista de inativos é opcional
+  }
+
   const projectsHtml = projects
     .map(
       (p) => `
@@ -586,6 +611,18 @@ app.get('/painel', async (req, res) => {
       <div class="copy-wrap">
         <pre class="snippet url">${escapeHtml(p.webhook_url)}</pre>
         <button type="button" class="btn btn-sm" data-copy="${escapeHtml(p.webhook_url)}">Copiar URL</button>
+      </div>
+    </div>`
+    )
+    .join('');
+
+  const inactiveHtml = inactiveProjects
+    .map(
+      (p) => `
+    <div class="card card-inactive">
+      <div class="card-header">
+        <h2 class="card-title">${escapeHtml(p.name)} <span class="badge badge-inactive">Inativo</span></h2>
+        <button type="button" class="btn btn-sm btn-primary btn-activate" data-id="${escapeHtml(p.id)}" data-name="${escapeHtml(p.name)}">Reativar</button>
       </div>
     </div>`
     )
@@ -621,8 +658,10 @@ app.get('/painel', async (req, res) => {
       </form>
     </section>
 
-    <h2 class="section-title">Projetos</h2>
-    ${projects.length ? projectsHtml : '<div class="empty-state">Nenhum projeto ainda. Crie um acima.</div>'}
+    <h2 class="section-title">Projetos ativos</h2>
+    ${projects.length ? projectsHtml : '<div class="empty-state">Nenhum projeto ativo. Crie um acima ou reative um inativo.</div>'}
+
+    ${inactiveProjects.length ? `<h2 class="section-title">Projetos inativos</h2>${inactiveHtml}` : ''}
 
     <div id="toast" class="toast" style="display:none;"></div>
 
@@ -730,6 +769,22 @@ app.get('/painel', async (req, res) => {
         }).then(function(r) {
           if (r.ok) { window.location.reload(); return; }
           return r.json().then(function(d) { throw new Error(d.error || 'Erro ao desativar'); });
+        }).catch(function(err) { alert(err.message); });
+      });
+    });
+
+    document.querySelectorAll('.btn-activate').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        var id = btn.getAttribute('data-id');
+        var headers = {};
+        if (adminKey) headers['X-Admin-Key'] = adminKey;
+        fetch('/api/projects/' + encodeURIComponent(id) + '/activate', {
+          method: 'POST',
+          headers: headers,
+          credentials: 'same-origin'
+        }).then(function(r) {
+          if (r.ok) { window.location.reload(); return; }
+          return r.json().then(function(d) { throw new Error(d.error || 'Erro ao reativar'); });
         }).catch(function(err) { alert(err.message); });
       });
     });
@@ -848,6 +903,23 @@ app.post('/api/projects/:id/deactivate', async (req, res) => {
   } catch (err) {
     console.error('[tracking-core] Erro ao desativar projeto:', err.message);
     return res.status(500).json({ error: 'Erro ao desativar projeto' });
+  }
+});
+
+app.post('/api/projects/:id/activate', async (req, res) => {
+  if (checkAdmin(req, res)) return;
+  if (!pool) return res.status(503).json({ error: 'Banco não configurado' });
+  const projectId = req.params.id;
+  try {
+    const r = await pool.query(
+      "UPDATE projects SET status = 'active' WHERE id = $1 RETURNING id",
+      [projectId]
+    );
+    if (r.rowCount === 0) return res.status(404).json({ error: 'Projeto não encontrado' });
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error('[tracking-core] Erro ao reativar projeto:', err.message);
+    return res.status(500).json({ error: 'Erro ao reativar projeto' });
   }
 });
 

@@ -46,7 +46,7 @@ Ponte confiável entre funil/site, gateways de pagamento e Meta (Conversions API
 
 | Método | Rota | Autenticação | Uso |
 |--------|------|--------------|-----|
-| GET | /health | — | Saúde da API |
+| GET | /health | — | Saúde da API (checa banco e Meta) |
 | GET | /login | — | Página de login (senha = ADMIN_SECRET) |
 | POST | /login | Form senha | Autentica e redireciona para /painel |
 | GET | /logout | — | Encerra sessão e redireciona para /login |
@@ -55,6 +55,7 @@ Ponte confiável entre funil/site, gateways de pagamento e Meta (Conversions API
 | POST | /api/projects | Header `X-Admin-Key: ADMIN_SECRET` | Criar projeto (nome, Meta opcional) |
 | PATCH | /api/projects/:id | Header `X-Admin-Key` | Editar projeto (nome, pixel_id, access_token, test_event_code) |
 | POST | /api/projects/:id/deactivate | Header `X-Admin-Key` | Desativar projeto |
+| POST | /api/projects/:id/activate | Header `X-Admin-Key` | Reativar projeto |
 | GET | /api/projects/:id/events | Header `X-Admin-Key` | Últimos eventos do projeto (JSON) |
 | POST | /events | Header `X-API-Key: api_key_public` | Eventos do site (SDK) |
 | POST | /webhooks/kiwify | Query `project_key=api_key_secret` ou header `X-Webhook-Secret` | Compra aprovada Kiwify |
