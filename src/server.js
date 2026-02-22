@@ -606,6 +606,11 @@ app.get('/painel', async (req, res) => {
   if (req.query.key === ADMIN_SECRET) setAdminCookie(res);
   const baseUrl = BASE_URL || `${req.protocol}://${req.get('host')}`;
   const adminKey = req.query.key || '';
+  const period = req.query.period || 'all'; // all | 1d | 7d | 30d
+  let dateFrom = null;
+  if (period === '1d') dateFrom = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  else if (period === '7d') dateFrom = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  else if (period === '30d') dateFrom = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
 
   let projects = [];
   try {
@@ -652,13 +657,17 @@ app.get('/painel', async (req, res) => {
 
   let statsByProject = {};
   try {
+    const dateCondition = dateFrom ? ' AND created_at >= $1' : '';
+    const params = dateFrom ? [dateFrom.toISOString()] : [];
     const rStats = await pool.query(
       `SELECT project_id,
               COUNT(*) AS total_events,
               COUNT(*) FILTER (WHERE event_name = 'Purchase') AS purchases,
               COALESCE(SUM(value) FILTER (WHERE event_name = 'Purchase'), 0) AS total_value
        FROM normalized_events
-       GROUP BY project_id`
+       WHERE 1=1${dateCondition}
+       GROUP BY project_id`,
+      params
     );
     rStats.rows.forEach((row) => {
       statsByProject[row.project_id] = {
@@ -671,6 +680,34 @@ app.get('/painel', async (req, res) => {
     // ignora
   }
 
+  let utmRows = [];
+  try {
+    const dateCondUtm = dateFrom ? ' AND created_at >= $1' : '';
+    const utmParams = dateFrom ? [dateFrom.toISOString()] : [];
+    const rUtm = await pool.query(
+      `SELECT
+        COALESCE(context->>'utm_source', '—') AS utm_source,
+        COALESCE(context->>'utm_medium', '—') AS utm_medium,
+        COALESCE(context->>'utm_campaign', '—') AS utm_campaign,
+        COUNT(*) AS purchases,
+        COALESCE(SUM(value), 0) AS total_value
+       FROM normalized_events
+       WHERE event_name = 'Purchase'${dateCondUtm}
+       GROUP BY context->>'utm_source', context->>'utm_medium', context->>'utm_campaign'
+       ORDER BY total_value DESC
+       LIMIT 50`,
+      utmParams
+    );
+    utmRows = rUtm.rows.map((row) => {
+      const v = parseFloat(row.total_value) || 0;
+      const valueStr = v > 0 ? 'R$ ' + Number(v).toFixed(2).replace('.', ',') : '—';
+      return `<tr><td>${escapeHtml(row.utm_source)}</td><td>${escapeHtml(row.utm_medium)}</td><td>${escapeHtml(row.utm_campaign)}</td><td>${row.purchases}</td><td>${valueStr}</td></tr>`;
+    });
+  } catch (e) {
+    // ignora
+  }
+  const utmRowsHtml = utmRows.join('');
+
   const summaryRows = projects
     .map((p) => {
       const s = statsByProject[p.id] || { total_events: 0, purchases: 0, total_value: 0 };
@@ -678,14 +715,24 @@ app.get('/painel', async (req, res) => {
       return `<tr><td>${escapeHtml(p.name)}</td><td>${s.total_events}</td><td>${s.purchases}</td><td>${valueStr}</td></tr>`;
     })
     .join('');
+  const periodQuery = period !== 'all' ? `?period=${period}` : '';
   const summaryHtml =
-    projects.length > 0
-      ? `<h2 class="section-title">Resumo</h2>
+    `<div class="section-header"><h2 class="section-title" id="resumo">Resumo</h2>
+    <select id="periodSelect" class="period-select" title="Período">
+      <option value="all" ${period === 'all' ? 'selected' : ''}>Todo o período</option>
+      <option value="1d" ${period === '1d' ? 'selected' : ''}>Últimas 24h</option>
+      <option value="7d" ${period === '7d' ? 'selected' : ''}>Últimos 7 dias</option>
+      <option value="30d" ${period === '30d' ? 'selected' : ''}>Últimos 30 dias</option>
+    </select></div>
     <table class="dashboard-table">
       <thead><tr><th>Projeto</th><th>Eventos</th><th>Compras</th><th>Valor total</th></tr></thead>
-      <tbody>${summaryRows}</tbody>
-    </table>`
-      : '';
+      <tbody>${summaryRows || '<tr><td colspan="4" class="events-empty">Nenhum projeto com eventos no período.</td></tr>'}</tbody>
+    </table>
+    ${utmRowsHtml ? `<h3 class="section-subtitle">Por campanha (UTM)</h3>
+    <table class="dashboard-table">
+      <thead><tr><th>utm_source</th><th>utm_medium</th><th>utm_campaign</th><th>Compras</th><th>Valor</th></tr></thead>
+      <tbody>${utmRowsHtml}</tbody>
+    </table>` : ''}`;
 
   const projectsHtml = projects
     .map(
@@ -738,37 +785,47 @@ app.get('/painel', async (req, res) => {
   <link rel="stylesheet" href="/public/painel.css">
 </head>
 <body>
-  <div class="painel-layout">
-    <header class="painel-header">
-      <h1>Tracking Core</h1>
-      <a href="/logout">Sair</a>
-    </header>
+  <div class="dashboard-wrap">
+    <aside class="dashboard-sidebar">
+      <div class="sidebar-logo">Tracking Core</div>
+      <nav class="sidebar-nav">
+        <a href="#resumo" class="sidebar-link">Resumo</a>
+        <a href="#projetos" class="sidebar-link">Projetos</a>
+      </nav>
+      <a href="/logout" class="sidebar-link sidebar-logout">Sair</a>
+    </aside>
+    <main class="dashboard-main">
+      <header class="dashboard-header">
+        <h1 class="dashboard-title">Dashboard</h1>
+        <span class="dashboard-user">Admin</span>
+      </header>
+      <div class="dashboard-content">
+        ${summaryHtml}
 
-    <section class="form-card">
-      <h2>Novo projeto</h2>
-      <form id="formNovo">
-        <span class="label">Nome do projeto</span>
-        <input type="text" name="name" required placeholder="Ex: Meu funil">
-        <span class="label">Pixel ID (Meta) – opcional</span>
-        <input type="text" name="pixel_id" placeholder="Ex: 123456789">
-        <span class="label">Access Token (Meta) – opcional</span>
-        <input type="password" name="access_token" placeholder="Token de acesso">
-        <span class="label">Test Event Code (opcional)</span>
-        <input type="text" name="test_event_code" placeholder="">
-        <button type="submit" class="btn btn-primary">Criar projeto</button>
-      </form>
-    </section>
+        <h2 class="section-title" id="projetos">Projetos</h2>
+        <section class="form-card">
+          <h2>Novo projeto</h2>
+          <form id="formNovo">
+            <span class="label">Nome do projeto</span>
+            <input type="text" name="name" required placeholder="Ex: Meu funil">
+            <span class="label">Pixel ID (Meta) – opcional</span>
+            <input type="text" name="pixel_id" placeholder="Ex: 123456789">
+            <span class="label">Access Token (Meta) – opcional</span>
+            <input type="password" name="access_token" placeholder="Token de acesso">
+            <span class="label">Test Event Code (opcional)</span>
+            <input type="text" name="test_event_code" placeholder="">
+            <button type="submit" class="btn btn-primary">Criar projeto</button>
+          </form>
+        </section>
 
-    ${summaryHtml}
+        <h3 class="section-subtitle">Projetos ativos</h3>
+        ${projects.length ? projectsHtml : '<div class="empty-state">Nenhum projeto ativo. Crie um acima ou reative um inativo.</div>'}
 
-    <h2 class="section-title">Projetos ativos</h2>
-    ${projects.length ? projectsHtml : '<div class="empty-state">Nenhum projeto ativo. Crie um acima ou reative um inativo.</div>'}
+        ${inactiveProjects.length ? `<h3 class="section-subtitle">Projetos inativos</h3>${inactiveHtml}` : ''}
 
-    ${inactiveProjects.length ? `<h2 class="section-title">Projetos inativos</h2>${inactiveHtml}` : ''}
+        <div id="toast" class="toast" style="display:none;"></div>
 
-    <div id="toast" class="toast" style="display:none;"></div>
-
-    <div id="modalEdit" class="modal">
+        <div id="modalEdit" class="modal">
       <div class="modal-content">
         <span class="modal-close" id="modalEditClose" aria-label="Fechar">&times;</span>
         <h2>Editar projeto</h2>
@@ -788,10 +845,20 @@ app.get('/painel', async (req, res) => {
         </form>
       </div>
     </div>
+      </div>
+    </main>
   </div>
 
   <script>
     var adminKey = ${JSON.stringify(adminKey)};
+    var periodQuery = ${JSON.stringify(periodQuery)};
+    var sel = document.getElementById('periodSelect');
+    if (sel) sel.addEventListener('change', function() {
+      var v = this.value;
+      var q = v !== 'all' ? '?period=' + v : '';
+      if (adminKey) q += (q ? '&' : '?') + 'key=' + encodeURIComponent(adminKey);
+      window.location.href = '/painel' + q;
+    });
     document.querySelectorAll('[data-copy]').forEach(function(btn) {
       btn.addEventListener('click', function() {
         var text = btn.getAttribute('data-copy');

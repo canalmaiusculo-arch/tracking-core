@@ -33,7 +33,122 @@ body {
   padding: 1.5rem;
 }
 
-/* Header */
+/* Dashboard layout (sidebar + main) */
+.dashboard-wrap {
+  display: flex;
+  min-height: 100vh;
+}
+
+.dashboard-sidebar {
+  width: 220px;
+  min-width: 220px;
+  background: var(--bg-card);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  padding: 1.25rem 0;
+}
+
+.sidebar-logo {
+  font-size: 1.1rem;
+  font-weight: 600;
+  padding: 0 1.25rem 1.25rem;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 1rem;
+  letter-spacing: -0.02em;
+}
+
+.sidebar-nav {
+  flex: 1;
+}
+
+.sidebar-link {
+  display: block;
+  padding: 0.5rem 1.25rem;
+  color: var(--text-muted);
+  text-decoration: none;
+  font-size: 0.9rem;
+  transition: color 0.15s, background 0.15s;
+}
+
+.sidebar-link:hover {
+  color: var(--text);
+  background: rgba(255,255,255,0.04);
+}
+
+.sidebar-link:active,
+.sidebar-link:focus {
+  color: var(--accent);
+}
+
+.sidebar-logout {
+  margin-top: auto;
+  border-top: 1px solid var(--border);
+  padding-top: 1rem;
+}
+
+.dashboard-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.dashboard-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.dashboard-title {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 600;
+}
+
+.dashboard-user {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.dashboard-content {
+  flex: 1;
+  padding: 1.5rem;
+  max-width: 920px;
+}
+
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.section-header .section-title { margin: 0; }
+
+.period-select {
+  padding: 0.4rem 0.75rem;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.section-subtitle {
+  margin: 1.5rem 0 0.75rem 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+/* Header (legacy / login) */
 .painel-header {
   display: flex;
   align-items: center;
