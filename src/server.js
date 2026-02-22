@@ -182,6 +182,64 @@ function painelLayout(opts) {
 </html>`;
 }
 
+// Catálogo de conversões para Fase 3 (geração de códigos por projeto)
+const CONVERSION_CATALOG = [
+  { key: 'PageView', label: 'PageView (página)' },
+  { key: 'ViewContent', label: 'ViewContent (conteúdo)' },
+  { key: 'AddToCart', label: 'AddToCart (carrinho)' },
+  { key: 'InitiateCheckout', label: 'InitiateCheckout (checkout)' },
+  { key: 'Purchase', label: 'Purchase (compra)' },
+  { key: 'Lead', label: 'Lead' },
+  { key: 'Contact', label: 'Contact' },
+  { key: 'Scroll', label: 'Scroll (25%, 75%, 100%)' }
+];
+
+function buildConversionSnippet(conversionKey, baseUrl, apiKey) {
+  const apiKeyEsc = (apiKey || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+  const base = `<script src="${baseUrl}/sdk/browser-tracker.js"></script>
+<script>
+  (function(){
+    var t = TrackingCore.createTracker({ endpoint: '${baseUrl}/events', apiKey: '${apiKeyEsc}' });`;
+  const lines = {
+    PageView: "    t.trackPageView();",
+    ViewContent: "    t.trackViewContent({});",
+    AddToCart: "    t.trackAddToCart({});",
+    InitiateCheckout: "    t.trackInitiateCheckout({});",
+    Purchase: "    t.trackPurchase({ order_id: 'PEDIDO', value: 0, currency: 'BRL' });",
+    Lead: "    t.trackLead({});",
+    Contact: "    t.trackContact({});",
+    Scroll: "    t.trackScrollDepth({ percentMarks: [25, 75, 100] });"
+  };
+  const line = lines[conversionKey];
+  if (!line) return base + "\n  })();\n</script>";
+  return base + "\n" + line + "\n  })();\n</script>";
+}
+
+function buildFullScript(conversionKeys, baseUrl, apiKey) {
+  const apiKeyEsc = (apiKey || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+  const lines = [];
+  (conversionKeys || ['PageView']).forEach((key) => {
+    const map = {
+      PageView: "  t.trackPageView();",
+      ViewContent: "  t.trackViewContent({});",
+      AddToCart: "  t.trackAddToCart({});",
+      InitiateCheckout: "  t.trackInitiateCheckout({});",
+      Purchase: "  t.trackPurchase({ order_id: 'PEDIDO', value: 0, currency: 'BRL' });",
+      Lead: "  t.trackLead({});",
+      Contact: "  t.trackContact({});",
+      Scroll: "  t.trackScrollDepth({ percentMarks: [25, 75, 100] });"
+    };
+    if (map[key]) lines.push(map[key]);
+  });
+  return `<script src="${baseUrl}/sdk/browser-tracker.js"></script>
+<script>
+(function(){
+  var t = TrackingCore.createTracker({ endpoint: '${baseUrl}/events', apiKey: '${apiKeyEsc}' });
+${lines.join('\n')}
+})();
+</script>`;
+}
+
 // Cookie de sessão do painel (assinado, sem banco)
 const ADMIN_COOKIE_NAME = 'tracking_admin';
 const ADMIN_SESSION_MAX_AGE = 24 * 60 * 60; // 24h em segundos
@@ -933,17 +991,29 @@ app.get('/painel/projetos', async (req, res) => {
   try {
     const r = await pool.query(
       `SELECT p.id, p.name, p.api_key_public, p.api_key_secret, p.webhook_out_url,
+              COALESCE(p.enabled_conversions, '["PageView"]'::jsonb) AS enabled_conversions,
               EXISTS(SELECT 1 FROM integrations_meta m WHERE m.project_id = p.id AND m.active) AS has_meta
        FROM projects p WHERE p.status = 'active' ORDER BY p.created_at DESC`
     );
-    projects = r.rows.map((row) => ({
-      id: row.id,
-      name: row.name,
-      api_key_public: row.api_key_public,
-      api_key_secret: row.api_key_secret,
-      webhook_out_url: row.webhook_out_url || '',
-      has_meta: row.has_meta,
-      script_snippet: `<script src="${baseUrl}/sdk/browser-tracker.js"></script>
+    projects = r.rows.map((row) => {
+      const rawConv = row.enabled_conversions;
+      const enabledList = Array.isArray(rawConv) && rawConv.length ? rawConv : ['PageView'];
+      const snippets = {};
+      CONVERSION_CATALOG.forEach((c) => {
+        snippets[c.key] = buildConversionSnippet(c.key, baseUrl, row.api_key_public);
+      });
+      const fullScript = buildFullScript(enabledList, baseUrl, row.api_key_public);
+      return {
+        id: row.id,
+        name: row.name,
+        api_key_public: row.api_key_public,
+        api_key_secret: row.api_key_secret,
+        webhook_out_url: row.webhook_out_url || '',
+        has_meta: row.has_meta,
+        enabled_conversions: enabledList,
+        snippets,
+        full_script: fullScript,
+        script_snippet: `<script src="${baseUrl}/sdk/browser-tracker.js"></script>
 <script>
   (function(){
     var t = TrackingCore.createTracker({
@@ -953,11 +1023,53 @@ app.get('/painel/projetos', async (req, res) => {
     t.trackPageView();
   })();
 </script>`,
-      webhook_url: `${baseUrl}/webhooks/kiwify?project_key=${encodeURIComponent(row.api_key_secret)}`
-    }));
+        webhook_url: `${baseUrl}/webhooks/kiwify?project_key=${encodeURIComponent(row.api_key_secret)}`
+      };
+    });
   } catch (e) {
-    console.error('[tracking-core] Erro ao listar projetos:', e.message);
-    return res.status(500).send('Erro ao carregar projetos.');
+    if (e.message && e.message.includes('enabled_conversions')) {
+      try {
+        const r = await pool.query(
+          `SELECT p.id, p.name, p.api_key_public, p.api_key_secret, p.webhook_out_url,
+                  EXISTS(SELECT 1 FROM integrations_meta m WHERE m.project_id = p.id AND m.active) AS has_meta
+           FROM projects p WHERE p.status = 'active' ORDER BY p.created_at DESC`
+        );
+        projects = r.rows.map((row) => {
+          const snippets = {};
+          CONVERSION_CATALOG.forEach((c) => {
+            snippets[c.key] = buildConversionSnippet(c.key, baseUrl, row.api_key_public);
+          });
+          return {
+            id: row.id,
+            name: row.name,
+            api_key_public: row.api_key_public,
+            api_key_secret: row.api_key_secret,
+            webhook_out_url: row.webhook_out_url || '',
+            has_meta: row.has_meta,
+            enabled_conversions: ['PageView'],
+            snippets,
+            full_script: buildFullScript(['PageView'], baseUrl, row.api_key_public),
+            script_snippet: `<script src="${baseUrl}/sdk/browser-tracker.js"></script>
+<script>
+  (function(){
+    var t = TrackingCore.createTracker({
+      endpoint: '${baseUrl}/events',
+      apiKey: '${row.api_key_public}'
+    });
+    t.trackPageView();
+  })();
+</script>`,
+            webhook_url: `${baseUrl}/webhooks/kiwify?project_key=${encodeURIComponent(row.api_key_secret)}`
+          };
+        });
+      } catch (e2) {
+        console.error('[tracking-core] Erro ao listar projetos:', e2.message);
+        return res.status(500).send('Erro ao carregar projetos.');
+      }
+    } else {
+      console.error('[tracking-core] Erro ao listar projetos:', e.message);
+      return res.status(500).send('Erro ao carregar projetos.');
+    }
   }
 
   let inactiveProjects = [];
@@ -969,8 +1081,22 @@ app.get('/painel/projetos', async (req, res) => {
   } catch (e) {}
 
   const projectsHtml = projects
-    .map(
-      (p) => `
+    .map((p) => {
+      const enabledSet = new Set(p.enabled_conversions || ['PageView']);
+      const checkboxes = CONVERSION_CATALOG.map(
+        (c) =>
+          `<label class="conversion-check"><input type="checkbox" class="conversion-cb" data-key="${escapeHtml(c.key)}" ${enabledSet.has(c.key) ? 'checked' : ''}> ${escapeHtml(c.label)}</label>`
+      ).join('');
+      const snippetBlocks = (p.enabled_conversions || ['PageView'])
+        .filter((k) => p.snippets && p.snippets[k])
+        .map(
+          (k) =>
+            `<span class="label">${escapeHtml(CONVERSION_CATALOG.find((c) => c.key === k)?.label || k)}</span>
+      <div class="copy-wrap"><pre class="snippet snippet-sm">${escapeHtml(p.snippets[k])}</pre>
+      <button type="button" class="btn btn-sm" data-copy="${escapeHtml((p.snippets || {})[k] || '')}">Copiar</button></div>`
+        )
+        .join('');
+      return `
     <div class="card" data-project-id="${escapeHtml(p.id)}">
       <div class="card-header">
         <h2 class="card-title">${escapeHtml(p.name)} ${p.has_meta ? '<span class="badge">Meta</span>' : ''}</h2>
@@ -982,20 +1108,29 @@ app.get('/painel/projetos', async (req, res) => {
         </div>
       </div>
       ${p.webhook_out_url ? `<span class="label">Webhook de saída (compras)</span><p style="margin:0 0 1rem 0;font-size:0.85rem;"><code>${escapeHtml(p.webhook_out_url)}</code></p>` : ''}
+      <div class="conversions-section">
+        <span class="label">Conversões a rastrear</span>
+        <div class="conversion-checkboxes">${checkboxes}</div>
+        <button type="button" class="btn btn-sm btn-primary btn-save-conversions" data-id="${escapeHtml(p.id)}">Salvar conversões</button>
+      </div>
+      <div class="codes-section">
+        <span class="label">Códigos de rastreamento</span>
+        ${snippetBlocks}
+        <span class="label">Script completo (todas as selecionadas)</span>
+        <div class="copy-wrap">
+          <pre class="snippet">${escapeHtml(p.full_script || p.script_snippet)}</pre>
+          <button type="button" class="btn btn-sm" data-copy="${escapeHtml(p.full_script || p.script_snippet)}">Copiar script completo</button>
+        </div>
+      </div>
       <span class="label">Chave pública</span>
       <p style="margin:0 0 1rem 0;"><code>${escapeHtml(p.api_key_public)}</code></p>
-      <span class="label">Script para o cabeçalho</span>
-      <div class="copy-wrap">
-        <pre class="snippet">${escapeHtml(p.script_snippet)}</pre>
-        <button type="button" class="btn btn-sm" data-copy="${escapeHtml(p.script_snippet)}">Copiar script</button>
-      </div>
       <span class="label">URL webhook Kiwify</span>
       <div class="copy-wrap">
         <pre class="snippet url">${escapeHtml(p.webhook_url)}</pre>
         <button type="button" class="btn btn-sm" data-copy="${escapeHtml(p.webhook_url)}">Copiar URL</button>
       </div>
-    </div>`
-    )
+    </div>`;
+    })
     .join('');
 
   const inactiveHtml = inactiveProjects
@@ -1152,6 +1287,32 @@ app.get('/painel/projetos', async (req, res) => {
             if (o.ok) { t.textContent = 'Evento de teste enviado!'; t.style.display = 'block'; setTimeout(function() { t.style.display = 'none'; }, 3000); }
             else { alert(o.data.error || 'Erro ao enviar evento'); }
           }).catch(function(err) { btn.disabled = false; alert(err.message); });
+      });
+    });
+    document.querySelectorAll('.btn-save-conversions').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        var id = btn.getAttribute('data-id');
+        var card = btn.closest('.card');
+        if (!card) return;
+        var keys = [];
+        card.querySelectorAll('.conversion-cb:checked').forEach(function(cb) {
+          var k = cb.getAttribute('data-key');
+          if (k) keys.push(k);
+        });
+        if (keys.length === 0) keys = ['PageView'];
+        var headers = { 'Content-Type': 'application/json' };
+        if (adminKey) headers['X-Admin-Key'] = adminKey;
+        btn.disabled = true;
+        fetch('/api/projects/' + encodeURIComponent(id), {
+          method: 'PATCH',
+          headers: headers,
+          credentials: 'same-origin',
+          body: JSON.stringify({ enabled_conversions: keys })
+        }).then(function(r) {
+          btn.disabled = false;
+          if (r.ok) { window.location.reload(); return; }
+          return r.json().then(function(d) { throw new Error(d.error || 'Erro ao salvar'); });
+        }).catch(function(err) { alert(err.message); });
       });
     });
   </script>`;
@@ -1337,17 +1498,30 @@ app.post('/api/projects', async (req, res) => {
   const pixelId = req.body?.pixel_id?.trim() || null;
   const accessToken = req.body?.access_token?.trim() || null;
   const testEventCode = req.body?.test_event_code?.trim() || null;
+  const enabledConversions = Array.isArray(req.body?.enabled_conversions) && req.body.enabled_conversions.length
+    ? req.body.enabled_conversions
+    : ['PageView'];
   const keys = generateApiKeys();
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     const tenantId = await getOrCreateDefaultTenant(client);
     const projectId = crypto.randomUUID();
-    await client.query(
-      `INSERT INTO projects (id, tenant_id, name, api_key_public, api_key_secret, status)
-       VALUES ($1, $2, $3, $4, $5, 'active')`,
-      [projectId, tenantId, name, keys.public, keys.secret]
-    );
+    try {
+      await client.query(
+        `INSERT INTO projects (id, tenant_id, name, api_key_public, api_key_secret, status, enabled_conversions)
+         VALUES ($1, $2, $3, $4, $5, 'active', $6)`,
+        [projectId, tenantId, name, keys.public, keys.secret, JSON.stringify(enabledConversions)]
+      );
+    } catch (insErr) {
+      if (insErr.message && insErr.message.includes('enabled_conversions')) {
+        await client.query(
+          `INSERT INTO projects (id, tenant_id, name, api_key_public, api_key_secret, status)
+           VALUES ($1, $2, $3, $4, $5, 'active')`,
+          [projectId, tenantId, name, keys.public, keys.secret]
+        );
+      } else throw insErr;
+    }
     if (pixelId && accessToken) {
       await client.query(
         `INSERT INTO integrations_meta (project_id, pixel_id, access_token, test_event_code, active)
@@ -1374,7 +1548,7 @@ app.post('/api/projects', async (req, res) => {
   });
 });
 
-// Editar projeto (nome e/ou Meta)
+// Editar projeto (nome, Meta, webhook, conversões)
 app.patch('/api/projects/:id', async (req, res) => {
   if (checkAdmin(req, res)) return;
   if (!pool) return res.status(503).json({ error: 'Banco não configurado' });
@@ -1384,6 +1558,7 @@ app.patch('/api/projects/:id', async (req, res) => {
   const pixelId = req.body?.pixel_id?.trim() || null;
   const accessToken = req.body?.access_token?.trim() || null;
   const testEventCode = req.body?.test_event_code?.trim() || null;
+  const enabledConversions = req.body?.enabled_conversions;
 
   try {
     if (name) {
@@ -1401,6 +1576,16 @@ app.patch('/api/projects/:id', async (req, res) => {
         [projectId, (webhookOutUrl && String(webhookOutUrl).trim()) || null, 'active']
       );
       if (wUpd.rowCount === 0 && !name) return res.status(404).json({ error: 'Projeto não encontrado' });
+    }
+    if (enabledConversions !== undefined && Array.isArray(enabledConversions)) {
+      try {
+        await pool.query(
+          'UPDATE projects SET enabled_conversions = $2 WHERE id = $1 AND status = $3 RETURNING id',
+          [projectId, JSON.stringify(enabledConversions), 'active']
+        );
+      } catch (colErr) {
+        if (!colErr.message || !colErr.message.includes('enabled_conversions')) throw colErr;
+      }
     }
     if (pixelId !== undefined && accessToken !== undefined) {
       const r = await pool.query(

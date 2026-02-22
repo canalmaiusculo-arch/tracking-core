@@ -54,19 +54,19 @@ Roadmap para melhorar a visualização e as conversões do painel Tracking Core.
 **Objetivo:** Ao criar/editar projeto, associar pixel e escolher quais conversões rastrear; gerar códigos por conversão (ou um único script organizado).
 
 ### 3.1 Projeto associado ao pixel
-- [ ] Na criação/edição de projeto: campo ou seleção para **associar um pixel** (já conectado na seção Pixel) ao projeto.
-- [ ] Persistir essa associação (ex.: em `integrations_meta` ou tabela de projeto já existente).
-- [ ] Listar no projeto qual pixel está vinculado.
+- [x] Na criação/edição de projeto: campo ou seleção para **associar um pixel** (já conectado na seção Pixel) ao projeto.
+- [x] Persistir essa associação (ex.: em `integrations_meta` ou tabela de projeto já existente).
+- [x] Listar no projeto qual pixel está vinculado.
 
 ### 3.2 Catálogo de conversões
-- [ ] Lista fixa de conversões disponíveis: ViewContent, InitiateCheckout, AddToCart, Purchase, scroll 25/75/100, Lead, etc.
-- [ ] Na tela do projeto (ou em “Configurar rastreamento”): **checkboxes** ou lista para **escolher quais conversões** aquele projeto vai usar.
+- [x] Lista fixa de conversões disponíveis: ViewContent, InitiateCheckout, AddToCart, Purchase, scroll 25/75/100, Lead, etc.
+- [x] Na tela do projeto (ou em “Configurar rastreamento”): **checkboxes** ou lista para **escolher quais conversões** aquele projeto vai usar.
 
 ### 3.3 Geração de códigos
 - [ ] Após selecionar as conversões: botão tipo **“Gerar códigos”** ou seção “Códigos de rastreamento”.
-- [ ] Exibir os **snippets por conversão** (um bloco por evento), com opção de copiar.
-- [ ] Opcional: **um único script** que já inclua todas as conversões selecionadas (mais organizado para quem prefere um bloco só).
-- [ ] Texto curto de ajuda em cada bloco (onde colar, o que o evento faz).
+- [x] Exibir os **snippets por conversão** (um bloco por evento), com opção de copiar.
+- [x] Opcional: **um único script** que já inclua todas as conversões selecionadas (mais organizado para quem prefere um bloco só).
+- [x] Texto curto de ajuda em cada bloco (onde colar, o que o evento faz).
 
 **Entregável Fase 3:** Fluxo “criar/editar projeto → associar pixel → escolher conversões → ver/copiar códigos” funcionando e visível no painel.
 

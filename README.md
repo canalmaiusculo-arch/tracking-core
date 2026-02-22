@@ -29,7 +29,7 @@ Ponte confiável entre funil/site, gateways de pagamento e Meta (Conversions API
    - Abra o cliente do Postgres e execute:
      1. Todo o conteúdo de `sql/schema.sql`
      2. Todo o conteúdo de `sql/seed.sql`
-   - Se o banco já existia antes: rode `sql/migrations/001_add_webhook_out.sql` e `sql/migrations/002_campaign_costs.sql` (webhook de saída e custo por UTM).
+   - Se o banco já existia antes: rode `sql/migrations/001_add_webhook_out.sql`, `002_campaign_costs.sql` e `003_enabled_conversions.sql` (webhook de saída, custo por UTM, conversões por projeto).
 
 4. **Projetos**
    - **Pelo painel (recomendado):** acesse `https://sua-api.com/painel?key=SEU_ADMIN_SECRET`, crie projetos e copie script + URL do webhook. Opcional: preencha Pixel ID e Access Token ao criar para Meta por projeto.

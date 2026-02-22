@@ -370,6 +370,34 @@ body {
 .copy-wrap { margin-bottom: 1rem; }
 .copy-wrap:last-child { margin-bottom: 0; }
 
+.conversions-section {
+  margin-bottom: 1.25rem;
+  padding: 1rem 0;
+  border-top: 1px solid var(--border);
+}
+
+.conversion-checkboxes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.25rem;
+  margin: 0.5rem 0 0.75rem 0;
+}
+
+.conversion-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.9rem;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.conversion-check input { margin: 0; }
+
+.codes-section { margin-bottom: 1rem; }
+.codes-section .copy-wrap { margin-bottom: 1rem; }
+.snippet-sm { font-size: 0.75rem; max-height: 8em; overflow-y: auto; }
+
 /* Forms */
 .form-card {
   background: var(--bg-card);
