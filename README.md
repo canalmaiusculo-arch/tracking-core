@@ -56,11 +56,12 @@ Ponte confiável entre funil/site, gateways de pagamento e Meta (Conversions API
 | PATCH | /api/projects/:id | Header `X-Admin-Key` | Editar projeto (nome, pixel_id, access_token, test_event_code) |
 | POST | /api/projects/:id/deactivate | Header `X-Admin-Key` | Desativar projeto |
 | POST | /api/projects/:id/activate | Header `X-Admin-Key` | Reativar projeto |
+| POST | /api/projects/:id/test-event | Header `X-Admin-Key` | Enviar evento PageView de teste |
 | GET | /api/projects/:id/events | Header `X-Admin-Key` | Últimos eventos do projeto (JSON) |
 | POST | /events | Header `X-API-Key: api_key_public` | Eventos do site (SDK) |
 | POST | /webhooks/kiwify | Query `project_key=api_key_secret` ou header `X-Webhook-Secret` | Compra aprovada Kiwify |
 
-Com banco configurado, `X-API-Key` é obrigatória em `POST /events`; se inválida ou ausente, retorna 401.
+Com banco configurado, `X-API-Key` é obrigatória em `POST /events`; se inválida ou ausente, retorna 401. Há **rate limit** por minuto em `POST /events` e no webhook Kiwify (padrão 120 e 60 req/min); configurável com `RATE_LIMIT_EVENTS_PER_MIN` e `RATE_LIMIT_WEBHOOK_PER_MIN`.
 
 ## SDK (navegador)
 

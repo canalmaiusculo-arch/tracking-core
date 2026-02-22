@@ -28,6 +28,34 @@ const hasMetaConfig = Boolean(META_PIXEL_ID && META_ACCESS_TOKEN);
 const ADMIN_SECRET = process.env.ADMIN_SECRET || null;
 const BASE_URL = process.env.BASE_URL || null; // ex: https://track.ascensaodomentor.com
 
+// Rate limit (por minuto, por chave)
+const RATE_LIMIT_EVENTS = parseInt(process.env.RATE_LIMIT_EVENTS_PER_MIN, 10) || 120;
+const RATE_LIMIT_WEBHOOK = parseInt(process.env.RATE_LIMIT_WEBHOOK_PER_MIN, 10) || 60;
+const rateLimitStore = new Map(); // key -> { count, resetAt }
+
+function getClientIp(req) {
+  return req.ip || req.get('x-forwarded-for')?.split(',')[0]?.trim() || req.socket?.remoteAddress || '';
+}
+
+function rateLimit(maxPerMinute, keyFn) {
+  return (req, res, next) => {
+    const key = keyFn(req);
+    if (!key) return next();
+    const now = Date.now();
+    const windowMs = 60 * 1000;
+    let entry = rateLimitStore.get(key);
+    if (!entry || now >= entry.resetAt) {
+      entry = { count: 0, resetAt: now + windowMs };
+      rateLimitStore.set(key, entry);
+    }
+    entry.count++;
+    if (entry.count > maxPerMinute) {
+      return res.status(429).json({ error: 'Muitas requisições. Tente novamente em alguns minutos.' });
+    }
+    next();
+  };
+}
+
 // Pool de conexão com Postgres (opcional, mas recomendado)
 let pool = null;
 if (DATABASE_URL) {
@@ -273,7 +301,10 @@ app.get('/health', async (req, res) => {
 });
 
 // Rota /events (equivalente evoluída do MVP)
-app.post('/events', async (req, res) => {
+app.post(
+  '/events',
+  rateLimit(RATE_LIMIT_EVENTS, (req) => `ev:${req.projectId || getClientIp(req)}`),
+  async (req, res) => {
   try {
     const body = req.body;
     const events = Array.isArray(body) ? body : [body];
@@ -408,7 +439,8 @@ app.post('/events', async (req, res) => {
     console.error('[tracking-core] Erro em /events:', err.message);
     return res.status(500).json({ error: 'Erro ao processar eventos' });
   }
-});
+  }
+);
 
 // Mapeia payload genérico de gateway (Kiwify e similares) para evento interno
 function mapGatewayPayloadToEvent(body, gateway) {
@@ -596,6 +628,7 @@ app.get('/painel', async (req, res) => {
         <h2 class="card-title">${escapeHtml(p.name)} ${p.has_meta ? '<span class="badge">Meta</span>' : ''}</h2>
         <div class="card-actions">
           <a href="/painel/events/${escapeHtml(p.id)}?key=${encodeURIComponent(adminKey || '')}" class="btn btn-sm">Ver eventos</a>
+          <button type="button" class="btn btn-sm btn-test-event" data-id="${escapeHtml(p.id)}">Testar evento</button>
           <button type="button" class="btn btn-sm btn-edit" data-id="${escapeHtml(p.id)}" data-name="${escapeHtml(p.name)}">Editar</button>
           <button type="button" class="btn btn-sm btn-danger btn-deactivate" data-id="${escapeHtml(p.id)}" data-name="${escapeHtml(p.name)}">Desativar</button>
         </div>
@@ -788,6 +821,25 @@ app.get('/painel', async (req, res) => {
         }).catch(function(err) { alert(err.message); });
       });
     });
+
+    document.querySelectorAll('.btn-test-event').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        var id = btn.getAttribute('data-id');
+        var headers = {};
+        if (adminKey) headers['X-Admin-Key'] = adminKey;
+        btn.disabled = true;
+        fetch('/api/projects/' + encodeURIComponent(id) + '/test-event', {
+          method: 'POST',
+          headers: headers,
+          credentials: 'same-origin'
+        }).then(function(r) { return r.json().then(function(d) { return { ok: r.ok, data: d }; }); }).then(function(o) {
+          btn.disabled = false;
+          var t = document.getElementById('toast');
+          if (o.ok) { t.textContent = 'Evento de teste enviado!'; t.style.display = 'block'; setTimeout(function() { t.style.display = 'none'; }, 3000); }
+          else { alert(o.data.error || 'Erro ao enviar evento'); }
+        }).catch(function(err) { btn.disabled = false; alert(err.message); });
+      });
+    });
   </script>
 </body>
 </html>`;
@@ -923,6 +975,42 @@ app.post('/api/projects/:id/activate', async (req, res) => {
   }
 });
 
+// Enviar evento de teste (PageView) para um projeto
+app.post('/api/projects/:id/test-event', async (req, res) => {
+  if (checkAdmin(req, res)) return;
+  if (!pool) return res.status(503).json({ error: 'Banco não configurado' });
+  const projectId = req.params.id;
+  const baseUrl = BASE_URL || `${req.protocol}://${req.get('host')}`;
+  try {
+    const r = await pool.query(
+      'SELECT api_key_public FROM projects WHERE id = $1 AND status = $2 LIMIT 1',
+      [projectId, 'active']
+    );
+    if (!r.rows[0]) return res.status(404).json({ error: 'Projeto não encontrado ou inativo' });
+    const apiKey = r.rows[0].api_key_public;
+    const testEvent = {
+      event_name: 'PageView',
+      event_id: crypto.randomUUID(),
+      timestamp: new Date().toISOString(),
+      user: {},
+      context: { url: 'https://test/tracking-core' },
+      properties: {}
+    };
+    const ax = await axios.post(`${baseUrl}/events`, testEvent, {
+      headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey },
+      timeout: 10000,
+      validateStatus: () => true
+    });
+    if (ax.status >= 400) {
+      return res.status(ax.status).json({ error: ax.data?.error || 'Falha ao enviar evento de teste' });
+    }
+    return res.json({ ok: true, message: 'Evento PageView de teste enviado. Confira em Ver eventos.' });
+  } catch (err) {
+    console.error('[tracking-core] Erro ao enviar evento de teste:', err.message);
+    return res.status(500).json({ error: 'Erro ao enviar evento de teste' });
+  }
+});
+
 // Últimos eventos do projeto (para o painel)
 app.get('/api/projects/:id/events', async (req, res) => {
   if (checkAdmin(req, res)) return;
@@ -1003,7 +1091,10 @@ app.get('/painel/events/:projectId', async (req, res) => {
 });
 
 // Webhook Kiwify: ?project_key=API_KEY_SECRET ou header X-Webhook-Secret
-app.post('/webhooks/kiwify', async (req, res) => {
+app.post(
+  '/webhooks/kiwify',
+  rateLimit(RATE_LIMIT_WEBHOOK, (req) => `wh:${getClientIp(req)}`),
+  async (req, res) => {
   const secret =
     req.query.project_key || req.header('X-Webhook-Secret') || req.header('Authorization')?.replace(/^Bearer\s+/i, '');
   if (!secret) {
@@ -1103,7 +1194,8 @@ app.post('/webhooks/kiwify', async (req, res) => {
   }
 
   return res.json({ ok: true });
-});
+  }
+);
 
 app.listen(PORT, () => {
   console.log(`[tracking-core] API rodando na porta ${PORT}`);
