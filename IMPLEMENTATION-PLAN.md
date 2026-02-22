@@ -77,18 +77,18 @@ Roadmap para melhorar a visualização e as conversões do painel Tracking Core.
 **Objetivo:** Deixar a interface com identidade visual de jogo (cores, formas, feedbacks).
 
 ### 4.1 Tema e componentes
-- [ ] Paleta e variáveis CSS em estilo gaming (cores vibrantes, contraste, gradientes se fizer sentido).
-- [ ] Bordas, cantos, sombras e ícones que lembrem UI de jogos (badges, cards “level”, barras de progresso).
-- [ ] Tipografia: fonte com personalidade (ex.: títulos mais marcantes), mantendo legibilidade.
+- [x] Paleta e variáveis CSS em estilo gaming (cores vibrantes, contraste, gradientes se fizer sentido).
+- [x] Bordas, cantos, sombras e ícones que lembrem UI de jogos (badges, cards “level”, barras de progresso).
+- [x] Tipografia: fonte com personalidade (ex.: títulos mais marcantes), mantendo legibilidade.
 
 ### 4.2 Elementos de “game”
-- [ ] Onde fizer sentido: **badges** (ex.: “Pixel ativo”, “X conversões”), **níveis** ou **progress bars** (ex.: meta de eventos no mês).
-- [ ] Feedback visual em ações: sucesso ao salvar, ao copiar código (toast ou animação leve).
-- [ ] Sidebar e header alinhados ao novo tema (ícones, cores, estados hover/active).
+- [x] Onde fizer sentido: **badges** (ex.: “Pixel ativo”, “X conversões”), **níveis** ou **progress bars** (ex.: meta de eventos no mês).
+- [x] Feedback visual em ações: sucesso ao salvar, ao copiar código (toast ou animação leve).
+- [x] Sidebar e header alinhados ao novo tema (ícones, cores, estados hover/active).
 
 ### 4.3 Consistência
-- [ ] Aplicar o tema em todas as páginas do painel: Dashboard, Pixel, Projetos, eventos, configurações.
-- [ ] Garantir acessibilidade (contraste, foco) mesmo com o visual mais “game”.
+- [x] Aplicar o tema em todas as páginas do painel: Dashboard, Pixel, Projetos, eventos, configurações.
+- [x] Garantir acessibilidade (contraste, foco) mesmo com o visual mais “game”.
 
 **Entregável Fase 4:** Painel com identidade visual de jogo aplicada de forma consistente em todo o sistema.
 
