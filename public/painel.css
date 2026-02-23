@@ -76,24 +76,12 @@ h1, h2, h3 {
 }
 
 .sidebar-logo {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
+  font-family: var(--font-heading);
+  font-size: 1.1rem;
+  font-weight: 700;
   padding: 0 1.25rem 1.25rem;
   border-bottom: 1px solid var(--border);
   margin-bottom: 1rem;
-}
-
-.sidebar-logo-img {
-  display: block;
-  height: 28px;
-  width: auto;
-}
-
-.sidebar-logo-text {
-  font-family: var(--font-heading);
-  font-size: 1.05rem;
-  font-weight: 700;
   letter-spacing: 0.05em;
   color: var(--accent);
   text-shadow: 0 0 20px var(--accent-dim);
@@ -173,16 +161,12 @@ h1, h2, h3 {
 }
 
 .dashboard-header-logo {
+  font-family: var(--font-heading);
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--accent);
+  letter-spacing: 0.05em;
   flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  margin-right: 0.5rem;
-}
-
-.dashboard-header-logo img.dashboard-logo-img {
-  display: block;
-  height: 28px;
-  width: auto;
 }
 
 .dashboard-title {
