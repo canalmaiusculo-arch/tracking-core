@@ -161,12 +161,16 @@ h1, h2, h3 {
 }
 
 .dashboard-header-logo {
-  font-family: var(--font-heading);
-  font-size: 1rem;
-  font-weight: 700;
-  color: var(--accent);
-  letter-spacing: 0.05em;
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  margin-right: 0.5rem;
+}
+
+.dashboard-header-logo img.dashboard-logo-img {
+  display: block;
+  height: 28px;
+  width: auto;
 }
 
 .dashboard-title {

@@ -157,7 +157,7 @@ function painelLayout(opts) {
       ${link('/painel/meta-ads', 'Meta Ads', 'meta_ads')}
     </nav>
     <a href="/logout" class="sidebar-link sidebar-logout">Sair</a>`;
-  const headerLeft = headerLogo ? `<span class="dashboard-header-logo">${escapeHtml(headerLogo)}</span>` : '';
+  const headerLeft = headerLogo ? `<span class="dashboard-header-logo">${headerLogo}</span>` : '';
   return `<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -168,6 +168,7 @@ function painelLayout(opts) {
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Exo+2:wght@400;500;600;700&family=Orbitron:wght@500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/public/painel.css">
+  <link rel="icon" type="image/png" href="/public/favicon.png">
 </head>
 <body>
   <div class="dashboard-wrap" id="dashboardWrap">
@@ -1342,7 +1343,7 @@ app.get('/painel', asyncHandler(async (req, res) => {
   const html = painelLayout({
     activeNav: 'dashboard',
     title: 'Dashboard - Principal',
-    headerLogo: 'Tracking Core',
+    headerLogo: '<img src="/public/logo-tracking-core.png" alt="Tracking Core" class="dashboard-logo-img">',
     headerRight: dashboardHeaderRight,
     content: dashboardContent,
     adminKey,
@@ -1711,6 +1712,7 @@ app.get('/painel/projetos', asyncHandler(async (req, res) => {
   const html = painelLayout({
     activeNav: 'projetos',
     title: 'Projetos',
+    headerLogo: '<img src="/public/logo-tracking-core.png" alt="Tracking Core" class="dashboard-logo-img">',
     headerRight: '<span class="dashboard-user">Admin</span>',
     content: projetosContent,
     adminKey,
@@ -1767,6 +1769,7 @@ app.get('/painel/pixel', asyncHandler(async (req, res) => {
   const html = painelLayout({
     activeNav: 'pixel',
     title: 'Pixel',
+    headerLogo: '<img src="/public/logo-tracking-core.png" alt="Tracking Core" class="dashboard-logo-img">',
     headerRight: '<span class="dashboard-user">Admin</span>',
     content: pixelContent,
     adminKey
@@ -1993,6 +1996,7 @@ app.get('/painel/meta-ads', asyncHandler(async (req, res) => {
   const html = painelLayout({
     activeNav: 'meta_ads',
     title: 'Meta Ads',
+    headerLogo: '<img src="/public/logo-tracking-core.png" alt="Tracking Core" class="dashboard-logo-img">',
     headerRight: '<span class="dashboard-user">Admin</span>',
     content,
     adminKey
