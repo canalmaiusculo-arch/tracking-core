@@ -149,7 +149,10 @@ function painelLayout(opts) {
   const link = (path, label, nav) =>
     `<a href="${href(path)}" class="sidebar-link${nav === activeNav ? ' active' : ''}">${escapeHtml(label)}</a>`;
   const sidebarHtml = `
-    <div class="sidebar-logo">Tracking Core</div>
+    <div class="sidebar-logo">
+      <img src="/public/logo-tracking-core.png" alt="Tracking Core" class="sidebar-logo-img">
+      <span class="sidebar-logo-text">Tracking Core</span>
+    </div>
     <nav class="sidebar-nav">
       ${link('/painel', 'Dashboard', 'dashboard')}
       ${link('/painel/pixel', 'Pixel', 'pixel')}
