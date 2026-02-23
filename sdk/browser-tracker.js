@@ -21,7 +21,9 @@
           utm_medium: getParam('utm_medium'),
           utm_campaign: getParam('utm_campaign'),
           utm_content: getParam('utm_content'),
-          utm_term: getParam('utm_term')
+          utm_term: getParam('utm_term'),
+          fbclid: getParam('fbclid'),
+          gclid: getParam('gclid')
         },
         properties: properties || {}
       };

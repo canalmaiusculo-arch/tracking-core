@@ -344,7 +344,12 @@ function buildNormalizedEvent(ev, projectId, source) {
     utm_medium: ev.context?.utm_medium || null,
     utm_campaign: ev.context?.utm_campaign || null,
     utm_content: ev.context?.utm_content || null,
-    utm_term: ev.context?.utm_term || null
+    utm_term: ev.context?.utm_term || null,
+    fbclid: ev.context?.fbclid || null,
+    gclid: ev.context?.gclid || null,
+    is_upsell: ev.context?.is_upsell ?? null,
+    parent_order_id: ev.context?.parent_order_id || null,
+    is_order_bump: ev.context?.is_order_bump ?? null
   };
 
   return {
@@ -467,6 +472,9 @@ async function sendToMeta(normalizedEvent, req, projectId) {
 
   if (normalizedEvent.user_hashes?.em) {
     userData.em = [normalizedEvent.user_hashes.em];
+  }
+  if (normalizedEvent.context?.fbclid) {
+    userData.fbc = 'fb.1.' + Math.floor(Date.now() / 1000) + '.' + normalizedEvent.context.fbclid;
   }
 
   const payload = {
@@ -674,6 +682,7 @@ app.post(
 );
 
 // Mapeia payload genérico de gateway (Kiwify e similares) para evento interno
+// Kiwify: valor em centavos em payment.* → dividir por 100; parent_order_id indica upsell
 function mapGatewayPayloadToEvent(body, gateway) {
   const orderId =
     body.order_id ||
@@ -682,35 +691,61 @@ function mapGatewayPayloadToEvent(body, gateway) {
     body.reference ||
     (body.order && body.order.id) ||
     null;
-  const valueRaw =
+  let valueRaw =
     body.value ??
     body.amount ??
     body.total ??
     (body.order && body.order.amount) ??
     (body.commission && body.commission.value);
-  const value =
+  // Kiwify: payment.charge_amount e product_base_price vêm em centavos
+  if (gateway === 'kiwify' && valueRaw == null && body.payment) {
+    valueRaw = body.payment.charge_amount ?? body.payment.product_base_price ?? body.payment.net_amount;
+  }
+  let value =
     typeof valueRaw === 'number'
       ? valueRaw
       : typeof valueRaw === 'string'
         ? parseFloat(valueRaw.replace(/,/, '.'))
         : null;
+  if (value != null && gateway === 'kiwify' && body.payment && (body.payment.charge_amount != null || body.payment.product_base_price != null)) {
+    value = value / 100;
+  }
   const email =
     body.email ||
     body.customer_email ||
     (body.customer && body.customer.email) ||
     (body.buyer && body.buyer.email) ||
     null;
+  const currency = body.currency || body.payment?.charge_currency || 'BRL';
+  const tracking = body.tracking || {};
+  const isUpsell = gateway === 'kiwify' && body.parent_order_id != null && body.parent_order_id !== '';
+  const isOrderBump =
+    gateway === 'kiwify' &&
+    (body.type === 'order_bump' ||
+      body.product?.type === 'order_bump' ||
+      body.is_order_bump === true ||
+      body.is_order_bump === 'true');
+  const context = {
+    utm_source: tracking.utm_source || null,
+    utm_medium: tracking.utm_medium || null,
+    utm_campaign: tracking.utm_campaign || null,
+    utm_content: tracking.utm_content || null,
+    utm_term: tracking.utm_term || null,
+    is_upsell: isUpsell || undefined,
+    parent_order_id: isUpsell ? body.parent_order_id : undefined,
+    is_order_bump: isOrderBump || undefined
+  };
 
   return {
     event_name: 'Purchase',
     event_id: crypto.randomUUID(),
     timestamp: new Date().toISOString(),
     user: { email: email || undefined },
-    context: {},
+    context,
     properties: {
       order_id: orderId,
       value: value != null ? value : undefined,
-      currency: body.currency || 'BRL'
+      currency
     },
     source: gateway
   };
@@ -1059,6 +1094,28 @@ app.get('/painel', asyncHandler(async (req, res) => {
     // ignora
   }
 
+  // Compras principal vs upsell (quando gateway envia context.is_upsell)
+  let purchasesPrincipal = 0;
+  let purchasesUpsell = 0;
+  try {
+    const dateCondP = dateFrom ? ' AND created_at >= $1' : '';
+    const paramsP = dateFrom ? [dateFrom.toISOString()] : [];
+    const rP = await pool.query(
+      `SELECT (context->>'is_upsell')::text AS is_upsell, COUNT(*) AS cnt
+       FROM normalized_events
+       WHERE event_name = 'Purchase'${dateCondP}
+       GROUP BY context->>'is_upsell'`,
+      paramsP
+    );
+    rP.rows.forEach((row) => {
+      const n = parseInt(row.cnt, 10) || 0;
+      if (row.is_upsell === 'true') purchasesUpsell = n;
+      else purchasesPrincipal += n;
+    });
+  } catch (e) {
+    // ignora
+  }
+
   let totalEvents = 0;
   let totalPurchases = 0;
   let totalValue = 0;
@@ -1082,7 +1139,7 @@ app.get('/painel', asyncHandler(async (req, res) => {
       <div class="kpi-card" title="Retorno sobre gasto em anúncios (valor ÷ custo)"><div class="kpi-card__value">${roasStr}</div><div class="kpi-card__label">ROAS</div></div>
       <div class="kpi-card" title="Taxa de conversão (compras ÷ eventos × 100)"><div class="kpi-card__value">${convRateStr}</div><div class="kpi-card__label">Taxa conv.</div></div>
     </div>
-    <p class="metrics-legend">CPA = Custo por aquisição · ROAS = Retorno sobre gasto em ads · Taxa conv. = Compras/Eventos. <span title="CPC (custo por clique) e CTR exigem dados de cliques/impressões do Meta Ads.">CPC/CTR</span> exigem integração com Meta Ads.</p>`;
+    <p class="metrics-legend">CPA = Custo por aquisição · ROAS = Retorno sobre gasto em ads · Taxa conv. = Compras/Eventos. <span title="CPC (custo por clique) e CTR exigem dados de cliques/impressões do Meta Ads.">CPC/CTR</span> exigem integração com Meta Ads.${purchasesPrincipal > 0 || purchasesUpsell > 0 ? ' <strong>Compras:</strong> ' + purchasesPrincipal + ' principal, ' + purchasesUpsell + ' upsell (Kiwify/webhook).' : ''}</p>`;
 
   const summaryRows = projects
     .map((p) => {
@@ -2350,13 +2407,19 @@ app.get('/painel/events/:projectId/export', async (req, res) => {
     const dateCond = dateFrom ? ' AND created_at >= $2' : '';
     const params = dateFrom ? [projectId, dateFrom.toISOString()] : [projectId];
     const r = await pool.query(
-      `SELECT event_name, order_id, value, currency, source, status, created_at
+      `SELECT event_name, order_id, value, currency, source, status, created_at, context
        FROM normalized_events WHERE project_id = $1${dateCond} ORDER BY created_at DESC LIMIT 500`,
       params
     );
-    const header = 'Data;Evento;Pedido;Valor;Moeda;Origem;Status';
+    const header = 'Data;Evento;Tipo;Pedido;Valor;Moeda;Origem;Status';
+    const tipoStr = (e) => {
+      if (e.event_name !== 'Purchase') return '';
+      if (e.context && (e.context.is_upsell === true || e.context.is_upsell === 'true')) return 'Upsell';
+      if (e.context && (e.context.is_order_bump === true || e.context.is_order_bump === 'true')) return 'Order bump';
+      return 'Principal';
+    };
     const csvRows = r.rows.map((e) =>
-      [csvEscape(e.created_at), csvEscape(e.event_name), csvEscape(e.order_id || ''), e.value != null ? e.value : '', csvEscape(e.currency || ''), csvEscape(e.source), csvEscape(e.status)].join(';')
+      [csvEscape(e.created_at), csvEscape(e.event_name), csvEscape(tipoStr(e)), csvEscape(e.order_id || ''), e.value != null ? e.value : '', csvEscape(e.currency || ''), csvEscape(e.source), csvEscape(e.status)].join(';')
     );
     const csv = '\uFEFF' + [header, ...csvRows].join('\r\n');
     const filename = 'eventos-' + projectId.slice(0, 8) + '-' + (period !== 'all' ? period + '-' : '') + new Date().toISOString().slice(0, 10) + '.csv';
@@ -2389,15 +2452,20 @@ app.get('/painel/events/:projectId', async (req, res) => {
     const dateCond = dateFrom ? ' AND created_at >= $2' : '';
     const params = dateFrom ? [projectId, dateFrom.toISOString()] : [projectId];
     const r = await pool.query(
-      `SELECT id, event_name, order_id, value, currency, source, status, created_at
+      `SELECT id, event_name, order_id, value, currency, source, status, created_at, context
        FROM normalized_events WHERE project_id = $1${dateCond} ORDER BY created_at DESC LIMIT 100`,
       params
     );
     const exportCsvUrl = '/painel/events/' + projectId + '/export?' + (period !== 'all' ? 'period=' + period + '&' : '') + (adminKey ? 'key=' + encodeURIComponent(adminKey) : '');
+    const isUpsell = (e) => e.context && (e.context.is_upsell === true || e.context.is_upsell === 'true');
+    const isOrderBump = (e) => e.context && (e.context.is_order_bump === true || e.context.is_order_bump === 'true');
+    const purchaseTipo = (e) => (isUpsell(e) ? 'Upsell' : isOrderBump(e) ? 'Order bump' : 'Principal');
     const rows = r.rows
       .map(
-        (e) =>
-          `<tr><td>${escapeHtml(e.created_at)}</td><td>${escapeHtml(e.event_name)}</td><td>${escapeHtml(e.order_id || '—')}</td><td>${e.value != null ? e.value : '—'}</td><td>${escapeHtml(e.source)}</td><td>${escapeHtml(e.status)}</td></tr>`
+        (e) => {
+          const tipo = e.event_name === 'Purchase' ? purchaseTipo(e) : '—';
+          return `<tr><td>${escapeHtml(e.created_at)}</td><td>${escapeHtml(e.event_name)}</td><td>${tipo}</td><td>${escapeHtml(e.order_id || '—')}</td><td>${e.value != null ? e.value : '—'}</td><td>${escapeHtml(e.source)}</td><td>${escapeHtml(e.status)}</td></tr>`;
+        }
       )
       .join('');
     const periodQuery = period !== 'all' ? '&period=' + period : '';
@@ -2429,8 +2497,8 @@ app.get('/painel/events/:projectId', async (req, res) => {
     </div>
     <div class="table-scroll">
     <table class="events-table">
-      <thead><tr><th>Data</th><th>Evento</th><th>Pedido</th><th>Valor</th><th>Origem</th><th>Status</th></tr></thead>
-      <tbody>${rows || '<tr><td colspan="6" class="events-empty">Nenhum evento no período.</td></tr>'}</tbody>
+      <thead><tr><th>Data</th><th>Evento</th><th>Tipo</th><th>Pedido</th><th>Valor</th><th>Origem</th><th>Status</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="7" class="events-empty">Nenhum evento no período.</td></tr>'}</tbody>
     </table>
     </div>
   </div>
