@@ -178,6 +178,12 @@ function painelLayout(opts) {
       </header>
       <div class="dashboard-content">${content}</div>
     </main>
+    <nav class="scroll-jump" aria-label="Ir para posição do scroll">
+      <button type="button" class="scroll-jump__btn" data-pct="25" title="Scroll 25%">25%</button>
+      <button type="button" class="scroll-jump__btn" data-pct="50" title="Scroll 50%">50%</button>
+      <button type="button" class="scroll-jump__btn" data-pct="75" title="Scroll 75%">75%</button>
+      <button type="button" class="scroll-jump__btn" data-pct="100" title="Scroll 100%">100%</button>
+    </nav>
   </div>
   <script>
     (function() {
@@ -189,6 +195,14 @@ function painelLayout(opts) {
         overlay.addEventListener('click', function() { wrap.classList.remove('sidebar-open'); });
         wrap.querySelectorAll('.sidebar-link').forEach(function(l) { l.addEventListener('click', function() { wrap.classList.remove('sidebar-open'); }); });
       }
+      document.querySelectorAll('.scroll-jump__btn').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+          var pct = parseInt(btn.getAttribute('data-pct'), 10) || 50;
+          var maxScroll = document.documentElement.scrollHeight - window.innerHeight;
+          var target = Math.round((maxScroll * pct) / 100);
+          window.scrollTo({ top: target, behavior: 'smooth' });
+        });
+      });
     })();
   </script>
   ${extraScripts ? extraScripts + '\n  ' : ''}</body>
@@ -204,7 +218,7 @@ const CONVERSION_CATALOG = [
   { key: 'Purchase', label: 'Purchase (compra)', tooltip: 'Registra compra concluída. Use na página de obrigado (thank you) com order_id e valor.' },
   { key: 'Lead', label: 'Lead', tooltip: 'Registra lead (cadastro, formulário). Use ao enviar formulário de captura.' },
   { key: 'Contact', label: 'Contact', tooltip: 'Registra contato (formulário, chat). Use em botões ou envio de contato.' },
-  { key: 'Scroll', label: 'Scroll (25%, 75%, 100%)', tooltip: 'Dispara ao rolar 25%, 75% e 100% da página ou de um elemento. Use para medir engajamento.' }
+  { key: 'Scroll', label: 'Scroll (25%, 50%, 75%, 100%)', tooltip: 'Envia um evento quando a pessoa rola 25%, 50%, 75% ou 100% da página. Use para ver até onde os visitantes vão (engajamento).' }
 ];
 
 function conversionLabelWithTooltip(c) {
@@ -227,7 +241,7 @@ function buildConversionSnippet(conversionKey, baseUrl, apiKey) {
     Purchase: "    t.trackPurchase({ order_id: 'PEDIDO', value: 0, currency: 'BRL' });",
     Lead: "    t.trackLead({});",
     Contact: "    t.trackContact({});",
-    Scroll: "    t.trackScrollDepth({ percentMarks: [25, 75, 100] });"
+    Scroll: "    t.trackScrollDepth({ percentMarks: [25, 50, 75, 100] });"
   };
   const line = lines[conversionKey];
   if (!line) return base + "\n  window._trackingCore = t;\n  })();\n</script>";
@@ -244,7 +258,7 @@ function buildInlineSnippet(conversionKey) {
     Purchase: 'window._trackingCore && window._trackingCore.trackPurchase({ order_id: \'PEDIDO\', value: 0, currency: \'BRL\' });',
     Lead: 'window._trackingCore && window._trackingCore.trackLead({});',
     Contact: 'window._trackingCore && window._trackingCore.trackContact({});',
-    Scroll: 'window._trackingCore && window._trackingCore.trackScrollDepth({ percentMarks: [25, 75, 100] });'
+    Scroll: 'window._trackingCore && window._trackingCore.trackScrollDepth({ percentMarks: [25, 50, 75, 100] });'
   };
   return map[conversionKey] || '';
 }
@@ -261,7 +275,7 @@ function buildFullScript(conversionKeys, baseUrl, apiKey) {
       Purchase: "  t.trackPurchase({ order_id: 'PEDIDO', value: 0, currency: 'BRL' });",
       Lead: "  t.trackLead({});",
       Contact: "  t.trackContact({});",
-      Scroll: "  t.trackScrollDepth({ percentMarks: [25, 75, 100] });"
+      Scroll: "  t.trackScrollDepth({ percentMarks: [25, 50, 75, 100] });"
     };
     if (map[key]) lines.push(map[key]);
   });

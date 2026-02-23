@@ -47,14 +47,14 @@
       }
     }
 
-    // Dispara eventos de scroll (25%, 75%, 100%) uma vez por marca
+    // Dispara eventos de scroll (25%, 50%, 75%, 100%) uma vez por marca
     function trackScrollDepth(options) {
       const opts = options || {};
       const el = typeof opts.element === 'string'
         ? document.querySelector(opts.element)
         : opts.element || null;
       const container = el || (document.scrollingElement || document.documentElement);
-      const percentMarks = opts.percentMarks || [25, 75, 100];
+      const percentMarks = opts.percentMarks || [25, 50, 75, 100];
       const sent = {};
 
       function getScrollPercent() {
