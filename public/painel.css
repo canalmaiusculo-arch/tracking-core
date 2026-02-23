@@ -313,6 +313,24 @@ h1, h2, h3 {
   opacity: 0.7;
 }
 
+.page-stats-section {
+  margin-top: 2rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--border);
+}
+
+.page-stats-section .section-subtitle {
+  margin: 0 0 0.35rem 0;
+  font-size: 1rem;
+}
+
+.dashboard-table-pages .page-url-cell {
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 @media (max-width: 640px) {
   .scroll-funnel__step {
     min-width: 3.5rem;

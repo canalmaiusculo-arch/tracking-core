@@ -33,6 +33,9 @@ const META_ADS_APP_ID = process.env.META_ADS_APP_ID || null;
 const META_ADS_APP_SECRET = process.env.META_ADS_APP_SECRET || null;
 const hasMetaAdsOAuthConfig = Boolean(META_ADS_APP_ID && META_ADS_APP_SECRET && BASE_URL);
 
+// Alerta global: webhook chamado em toda compra (além do webhook por projeto)
+const ALERT_WEBHOOK_URL = process.env.ALERT_WEBHOOK_URL || null;
+
 // Rate limit (por minuto, por chave)
 const RATE_LIMIT_EVENTS = parseInt(process.env.RATE_LIMIT_EVENTS_PER_MIN, 10) || 120;
 const RATE_LIMIT_WEBHOOK = parseInt(process.env.RATE_LIMIT_WEBHOOK_PER_MIN, 10) || 60;
@@ -413,6 +416,33 @@ async function notifyOutgoingWebhook(projectId, normalizedEvent) {
   });
 }
 
+// Alerta global: notifica ALERT_WEBHOOK_URL em toda compra (Slack, e-mail, etc.)
+async function notifyAlertWebhook(projectId, normalizedEvent) {
+  if (normalizedEvent.event_name !== 'Purchase' || !ALERT_WEBHOOK_URL) return;
+  let projectName = projectId;
+  if (pool) {
+    try {
+      const r = await pool.query('SELECT name FROM projects WHERE id = $1 LIMIT 1', [projectId]);
+      if (r.rows[0]) projectName = r.rows[0].name;
+    } catch (_) {}
+  }
+  const payload = {
+    alert: 'purchase',
+    project_id: projectId,
+    project_name: projectName,
+    event_name: normalizedEvent.event_name,
+    event_id: normalizedEvent.event_id,
+    order_id: normalizedEvent.order_id,
+    value: normalizedEvent.value,
+    currency: normalizedEvent.currency || 'BRL',
+    source: normalizedEvent.source,
+    created_at: normalizedEvent.created_at
+  };
+  axios.post(ALERT_WEBHOOK_URL, payload, { timeout: 8000, validateStatus: () => true }).catch((err) => {
+    console.warn('[tracking-core] Alerta webhook falhou:', err.message);
+  });
+}
+
 async function sendToMeta(normalizedEvent, req, projectId) {
   const meta = await getMetaConfig(projectId);
   if (!meta) {
@@ -614,7 +644,10 @@ app.post(
               [normalized.id, metaResult.ok ? 'sent' : 'failed']
             );
           }
-          if (normalized.event_name === 'Purchase') notifyOutgoingWebhook(projectId, normalized);
+          if (normalized.event_name === 'Purchase') {
+            notifyOutgoingWebhook(projectId, normalized);
+            notifyAlertWebhook(projectId, normalized);
+          }
         }
 
         await client.query(
@@ -996,6 +1029,36 @@ app.get('/painel', asyncHandler(async (req, res) => {
     // ignora
   }
 
+  // Performance por página (agrupa por URL sem query string)
+  let pageStatsRows = [];
+  try {
+    const paramsPage = dateFrom ? [dateFrom.toISOString()] : [];
+    const rPage2 = await pool.query(
+      `SELECT
+        regexp_replace(COALESCE(context->>'url', ''), '\\?.*$', '') AS page_url,
+        COUNT(*) AS events,
+        COUNT(*) FILTER (WHERE event_name = 'Purchase') AS purchases,
+        COALESCE(SUM(value) FILTER (WHERE event_name = 'Purchase'), 0) AS total_value
+       FROM normalized_events
+       WHERE COALESCE(context->>'url', '') <> ''${dateFrom ? ' AND created_at >= $1' : ''}
+       GROUP BY regexp_replace(COALESCE(context->>'url', ''), '\\?.*$', '')
+       ORDER BY total_value DESC, events DESC
+       LIMIT 50`,
+      paramsPage
+    );
+    pageStatsRows = rPage2.rows.map((row) => {
+      const events = parseInt(row.events, 10) || 0;
+      const purchases = parseInt(row.purchases, 10) || 0;
+      const value = parseFloat(row.total_value) || 0;
+      const convRate = events > 0 && purchases > 0 ? ((purchases / events) * 100).toFixed(2).replace('.', ',') + '%' : '—';
+      const valueStr = value > 0 ? 'R$ ' + Number(value).toFixed(2).replace('.', ',') : '—';
+      const pageDisplay = (row.page_url || '').length > 60 ? (row.page_url || '').slice(0, 57) + '…' : (row.page_url || '—');
+      return { page_url: row.page_url || '—', page_display: pageDisplay, events, purchases, valueStr, convRate };
+    });
+  } catch (e) {
+    // ignora
+  }
+
   let totalEvents = 0;
   let totalPurchases = 0;
   let totalValue = 0;
@@ -1091,6 +1154,25 @@ app.get('/painel', asyncHandler(async (req, res) => {
     </div>
     </div>`;
 
+  const pageStatsHtml =
+    pageStatsRows.length > 0
+      ? `<div class="page-stats-section">
+    <h3 class="section-subtitle">Performance por página</h3>
+    <p class="dashboard-lead dashboard-lead--compact">Eventos, compras e conversão por URL (sem query string). Ordenado por valor total.</p>
+    <div class="dashboard-table-wrap">
+    <table class="dashboard-table dashboard-table-pages">
+      <thead><tr><th>Página</th><th>Eventos</th><th>Compras</th><th>Valor total</th><th>Taxa conv.</th></tr></thead>
+      <tbody>${pageStatsRows
+        .map(
+          (r) =>
+            `<tr><td class="page-url-cell" title="${escapeHtml(r.page_url)}">${escapeHtml(r.page_display)}</td><td>${r.events}</td><td>${r.purchases}</td><td>${r.valueStr}</td><td>${r.convRate}</td></tr>`
+        )
+        .join('')}</tbody>
+    </table>
+    </div>
+    </div>`
+      : '';
+
   const tabsHtml = `
     <div class="dashboard-tabs" role="tablist">
       <button type="button" class="dashboard-tab active" role="tab" id="tab-resumo" aria-selected="true" aria-controls="panel-resumo">Resumo</button>
@@ -1100,6 +1182,7 @@ app.get('/painel', asyncHandler(async (req, res) => {
       ${kpiCardsHtml}
       ${summaryHtml}
       ${scrollFunnelHtml}
+      ${pageStatsHtml}
     </div>
     ${campaignPanelHtml}`;
 
@@ -2169,6 +2252,58 @@ app.put('/api/campaign-cost', async (req, res) => {
   }
 });
 
+// API de consulta: estatísticas do projeto por período (para integrações / BI)
+app.get('/api/stats', async (req, res) => {
+  if (!pool) return res.status(503).json({ error: 'Banco não configurado' });
+  const projectId = req.projectId;
+  if (!projectId) return res.status(401).json({ error: 'X-API-Key inválida ou ausente' });
+  let dateFrom = null;
+  let dateTo = null;
+  const period = req.query.period || 'all';
+  if (req.query.from && req.query.to) {
+    dateFrom = new Date(req.query.from);
+    dateTo = new Date(req.query.to);
+    if (isNaN(dateFrom.getTime()) || isNaN(dateTo.getTime())) {
+      return res.status(400).json({ error: 'from e to devem ser datas ISO válidas' });
+    }
+  } else {
+    if (period === '1d') dateFrom = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    else if (period === '7d') dateFrom = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    else if (period === '30d') dateFrom = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  }
+  try {
+    const dateCond = dateFrom ? ' AND created_at >= $2' : '';
+    const dateCondTo = dateTo ? ' AND created_at <= $3' : '';
+    const params = dateFrom && dateTo ? [projectId, dateFrom.toISOString(), dateTo.toISOString()] : dateFrom ? [projectId, dateFrom.toISOString()] : [projectId];
+    const r = await pool.query(
+      `SELECT
+        COUNT(*) AS events,
+        COUNT(*) FILTER (WHERE event_name = 'Purchase') AS purchases,
+        COALESCE(SUM(value) FILTER (WHERE event_name = 'Purchase'), 0) AS total_value
+       FROM normalized_events
+       WHERE project_id = $1${dateCond}${dateCondTo}`,
+      params
+    );
+    const row = r.rows[0];
+    const events = parseInt(row?.events, 10) || 0;
+    const purchases = parseInt(row?.purchases, 10) || 0;
+    const total_value = parseFloat(row?.total_value) || 0;
+    return res.json({
+      ok: true,
+      project_id: projectId,
+      period: dateFrom && dateTo ? null : period,
+      from: dateFrom ? dateFrom.toISOString() : null,
+      to: dateTo ? dateTo.toISOString() : null,
+      events,
+      purchases,
+      total_value
+    });
+  } catch (err) {
+    console.error('[tracking-core] Erro /api/stats:', err.message);
+    return res.status(500).json({ error: 'Erro ao consultar estatísticas' });
+  }
+});
+
 app.get('/api/projects/:id/events', async (req, res) => {
   if (checkAdmin(req, res)) return;
   if (!pool) return res.status(503).json({ error: 'Banco não configurado' });
@@ -2406,7 +2541,10 @@ app.post(
           [normalized.id, metaResult.ok ? 'sent' : 'failed']
         );
       }
-      if (normalized.event_name === 'Purchase') notifyOutgoingWebhook(projectId, normalized);
+      if (normalized.event_name === 'Purchase') {
+        notifyOutgoingWebhook(projectId, normalized);
+        notifyAlertWebhook(projectId, normalized);
+      }
     }
 
     await client.query(`UPDATE raw_events SET status = $2 WHERE id = $1`, [rawId, 'processed']);

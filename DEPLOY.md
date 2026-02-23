@@ -45,6 +45,7 @@ Com a API em um servidor na nuvem, qualquer pessoa pode acessar e a Kiwify conse
    - `BASE_URL` = URL pública da API (ex.: `https://track.ascensaodomentor.com`). Usada nos snippets do painel.
    - (Opcional) `META_PIXEL_ID`, `META_ACCESS_TOKEN`, `META_TEST_EVENT_CODE` se quiser Meta global (fallback quando o projeto não tem integração)
    - (Opcional) **Meta Ads (listar campanhas e gastos):** `META_ADS_APP_ID`, `META_ADS_APP_SECRET` (crie um app em developers.facebook.com com permissão `ads_read`; use a mesma `BASE_URL` como redirect). Rode no banco o script `sql/meta_ads.sql` para criar a tabela `meta_ads_connections`.
+   - (Opcional) **Alerta global em compras:** `ALERT_WEBHOOK_URL` — URL chamada em toda compra (além do webhook por projeto). Útil para Slack, Zapier ou serviço de e-mail.
 7. Em **Settings**, procure por **Public Networking** ou **Generate Domain** e ative. Se tiver domínio próprio (ex.: track.ascensaodomentor.com), configure em **Settings → Domains**.
 8. Anote a URL da API (ex.: `https://track.ascensaodomentor.com`).
 
@@ -78,6 +79,10 @@ Use o snippet exibido no painel ou, manualmente, a URL base da API (ex.: `https:
 
 - URL do webhook: `https://track.ascensaodomentor.com/webhooks/kiwify?project_key=sk_live_xxxxxxxxxxxxxxxx`
 - Use exatamente a **api_key_secret** do seu projeto (visível no painel ou no banco).
+
+### API de consulta (estatísticas)
+
+- `GET /api/stats?period=7d` — retorna eventos, compras e valor total do projeto no período. Requer header `X-API-Key` com a chave pública do projeto. Parâmetros: `period` (1d, 7d, 30d, all) ou `from` e `to` (datas ISO). Útil para integrações e BI.
 
 ---
 
