@@ -847,6 +847,7 @@ app.get('/painel', asyncHandler(async (req, res) => {
   const baseUrl = BASE_URL || `${req.protocol}://${req.get('host')}`;
   const adminKey = req.query.key || '';
   const period = req.query.period || 'all'; // all | 1d | 7d | 30d
+  const projectParam = req.query.project || ''; // '' = todos, ou uuid do projeto
   let dateFrom = null;
   if (period === '1d') dateFrom = new Date(Date.now() - 24 * 60 * 60 * 1000);
   else if (period === '7d') dateFrom = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
@@ -884,6 +885,7 @@ app.get('/painel', asyncHandler(async (req, res) => {
     console.error('[tracking-core] Erro ao listar projetos no painel:', e.message);
     return res.status(500).send('Erro ao carregar projetos.');
   }
+  const filterProjectId = projectParam && projects.some((p) => p.id === projectParam) ? projectParam : null;
 
   let inactiveProjects = [];
   try {
@@ -898,14 +900,15 @@ app.get('/painel', asyncHandler(async (req, res) => {
   let statsByProject = {};
   try {
     const dateCondition = dateFrom ? ' AND created_at >= $1' : '';
-    const params = dateFrom ? [dateFrom.toISOString()] : [];
+    const projectCondition = filterProjectId ? (dateFrom ? ' AND project_id = $2' : ' AND project_id = $1') : '';
+    const params = [...(dateFrom ? [dateFrom.toISOString()] : []), ...(filterProjectId ? [filterProjectId] : [])];
     const rStats = await pool.query(
       `SELECT project_id,
               COUNT(*) AS total_events,
               COUNT(*) FILTER (WHERE event_name = 'Purchase') AS purchases,
               COALESCE(SUM(value) FILTER (WHERE event_name = 'Purchase'), 0) AS total_value
        FROM normalized_events
-       WHERE 1=1${dateCondition}
+       WHERE 1=1${dateCondition}${projectCondition}
        GROUP BY project_id`,
       params
     );
@@ -932,9 +935,10 @@ app.get('/painel', asyncHandler(async (req, res) => {
   }
 
   let utmRows = [];
+  const dateCondUtm = dateFrom ? ' AND created_at >= $1' : '';
+  const projectCondUtm = filterProjectId ? (dateFrom ? ' AND project_id = $2' : ' AND project_id = $1') : '';
+  const utmParams = [...(dateFrom ? [dateFrom.toISOString()] : []), ...(filterProjectId ? [filterProjectId] : [])];
   try {
-    const dateCondUtm = dateFrom ? ' AND created_at >= $1' : '';
-    const utmParams = dateFrom ? [dateFrom.toISOString()] : [];
     const rUtm = await pool.query(
       `SELECT
         COALESCE(context->>'utm_source', '—') AS utm_source,
@@ -943,7 +947,7 @@ app.get('/painel', asyncHandler(async (req, res) => {
         COUNT(*) AS purchases,
         COALESCE(SUM(value), 0) AS total_value
        FROM normalized_events
-       WHERE event_name = 'Purchase'${dateCondUtm}
+       WHERE event_name = 'Purchase'${dateCondUtm}${projectCondUtm}
        GROUP BY context->>'utm_source', context->>'utm_medium', context->>'utm_campaign'
        ORDER BY total_value DESC
        LIMIT 50`,
@@ -984,7 +988,7 @@ app.get('/painel', asyncHandler(async (req, res) => {
         COUNT(*) AS purchases,
         COALESCE(SUM(value), 0) AS total_value
        FROM normalized_events
-       WHERE event_name = 'Purchase'${dateCondUtm}
+       WHERE event_name = 'Purchase'${dateCondUtm}${projectCondUtm}
        GROUP BY context->>'utm_source', context->>'utm_medium', context->>'utm_campaign'
        ORDER BY total_value DESC
        LIMIT 50`,
@@ -1029,13 +1033,14 @@ app.get('/painel', asyncHandler(async (req, res) => {
   let untrackedSalesCount = 0;
   try {
     const dateCondUntracked = dateFrom ? ' AND created_at >= $1' : '';
-    const untrackedParams = dateFrom ? [dateFrom.toISOString()] : [];
+    const projectCondUntracked = filterProjectId ? (dateFrom ? ' AND project_id = $2' : ' AND project_id = $1') : '';
+    const untrackedParams = [...(dateFrom ? [dateFrom.toISOString()] : []), ...(filterProjectId ? [filterProjectId] : [])];
     const rUntracked = await pool.query(
       `SELECT COUNT(*) AS cnt
        FROM normalized_events
        WHERE event_name = 'Purchase'
          AND source = 'gateway'
-         AND (context IS NULL OR context->>'utm_source' IS NULL OR TRIM(COALESCE(context->>'utm_source', '')) = '')${dateCondUntracked}`,
+         AND (context IS NULL OR context->>'utm_source' IS NULL OR TRIM(COALESCE(context->>'utm_source', '')) = '')${dateCondUntracked}${projectCondUntracked}`,
       untrackedParams
     );
     untrackedSalesCount = parseInt(rUntracked.rows[0]?.cnt, 10) || 0;
@@ -1048,12 +1053,16 @@ app.get('/painel', asyncHandler(async (req, res) => {
   let scrollCounts = { PageView: 0, scroll_25: 0, scroll_50: 0, scroll_75: 0, scroll_100: 0 };
   try {
     const dateCondScroll = dateFrom ? ' AND created_at >= $2' : '';
+    const projectCondScroll = filterProjectId ? (dateFrom ? ' AND project_id = $3' : ' AND project_id = $2') : '';
+    const scrollParams = dateFrom
+      ? [scrollEventNames, dateFrom.toISOString(), ...(filterProjectId ? [filterProjectId] : [])]
+      : (filterProjectId ? [scrollEventNames, filterProjectId] : [scrollEventNames]);
     const rScroll = await pool.query(
       `SELECT event_name, COUNT(*) AS cnt
        FROM normalized_events
-       WHERE event_name = ANY($1::text[])${dateCondScroll}
+       WHERE event_name = ANY($1::text[])${dateCondScroll}${projectCondScroll}
        GROUP BY event_name`,
-      dateFrom ? [scrollEventNames, dateFrom.toISOString()] : [scrollEventNames]
+      scrollParams
     );
     rScroll.rows.forEach((row) => {
       if (Object.prototype.hasOwnProperty.call(scrollCounts, row.event_name)) {
@@ -1067,7 +1076,9 @@ app.get('/painel', asyncHandler(async (req, res) => {
   // Performance por página (agrupa por URL sem query string)
   let pageStatsRows = [];
   try {
-    const paramsPage = dateFrom ? [dateFrom.toISOString()] : [];
+    const dateCondPage = dateFrom ? ' AND created_at >= $1' : '';
+    const projectCondPage = filterProjectId ? (dateFrom ? ' AND project_id = $2' : ' AND project_id = $1') : '';
+    const paramsPage = [...(dateFrom ? [dateFrom.toISOString()] : []), ...(filterProjectId ? [filterProjectId] : [])];
     const rPage2 = await pool.query(
       `SELECT
         regexp_replace(COALESCE(context->>'url', ''), '\\?.*$', '') AS page_url,
@@ -1075,7 +1086,7 @@ app.get('/painel', asyncHandler(async (req, res) => {
         COUNT(*) FILTER (WHERE event_name = 'Purchase') AS purchases,
         COALESCE(SUM(value) FILTER (WHERE event_name = 'Purchase'), 0) AS total_value
        FROM normalized_events
-       WHERE COALESCE(context->>'url', '') <> ''${dateFrom ? ' AND created_at >= $1' : ''}
+       WHERE COALESCE(context->>'url', '') <> ''${dateCondPage}${projectCondPage}
        GROUP BY regexp_replace(COALESCE(context->>'url', ''), '\\?.*$', '')
        ORDER BY total_value DESC, events DESC
        LIMIT 50`,
@@ -1099,11 +1110,12 @@ app.get('/painel', asyncHandler(async (req, res) => {
   let purchasesUpsell = 0;
   try {
     const dateCondP = dateFrom ? ' AND created_at >= $1' : '';
-    const paramsP = dateFrom ? [dateFrom.toISOString()] : [];
+    const projectCondP = filterProjectId ? (dateFrom ? ' AND project_id = $2' : ' AND project_id = $1') : '';
+    const paramsP = [...(dateFrom ? [dateFrom.toISOString()] : []), ...(filterProjectId ? [filterProjectId] : [])];
     const rP = await pool.query(
       `SELECT (context->>'is_upsell')::text AS is_upsell, COUNT(*) AS cnt
        FROM normalized_events
-       WHERE event_name = 'Purchase'${dateCondP}
+       WHERE event_name = 'Purchase'${dateCondP}${projectCondP}
        GROUP BY context->>'is_upsell'`,
       paramsP
     );
@@ -1141,7 +1153,8 @@ app.get('/painel', asyncHandler(async (req, res) => {
     </div>
     <p class="metrics-legend">CPA = Custo por aquisição · ROAS = Retorno sobre gasto em ads · Taxa conv. = Compras/Eventos. <span title="CPC (custo por clique) e CTR exigem dados de cliques/impressões do Meta Ads.">CPC/CTR</span> exigem integração com Meta Ads.${purchasesPrincipal > 0 || purchasesUpsell > 0 ? ' <strong>Compras:</strong> ' + purchasesPrincipal + ' principal, ' + purchasesUpsell + ' upsell (Kiwify/webhook).' : ''}</p>`;
 
-  const summaryRows = projects
+  const projectsForSummary = filterProjectId ? projects.filter((p) => p.id === filterProjectId) : projects;
+  const summaryRows = projectsForSummary
     .map((p) => {
       const s = statsByProject[p.id] || { total_events: 0, purchases: 0, total_value: 0 };
       const valueStr = s.total_value > 0 ? 'R$ ' + Number(s.total_value).toFixed(2).replace('.', ',') : '—';
@@ -1150,10 +1163,16 @@ app.get('/painel', asyncHandler(async (req, res) => {
     })
     .join('');
   const periodQuery = period !== 'all' ? `?period=${period}` : '';
-  const exportResumoUrl = '/painel/export/resumo?' + (period !== 'all' ? 'period=' + period + '&' : '') + (adminKey ? 'key=' + encodeURIComponent(adminKey) : '');
+  const projectQuery = filterProjectId ? (periodQuery ? '&' : '?') + 'project=' + encodeURIComponent(filterProjectId) : '';
+  const exportResumoQs = [period !== 'all' && 'period=' + period, filterProjectId && 'project=' + encodeURIComponent(filterProjectId), adminKey && 'key=' + encodeURIComponent(adminKey)].filter(Boolean).join('&');
+  const exportResumoUrl = '/painel/export/resumo?' + (exportResumoQs ? exportResumoQs : '');
+  const projectSelectOptions = '<option value="">Todos os projetos</option>' + projects.map((p) => `<option value="${escapeHtml(p.id)}" ${p.id === filterProjectId ? 'selected' : ''}>${escapeHtml(p.name)}</option>`).join('');
   const summaryHtml =
     `<div class="section-header"><h2 class="section-title" id="resumo">Resumo</h2>
     <div class="section-header-actions">
+      <select id="projectSelect" class="period-select" title="Projeto" style="max-width:220px">
+        ${projectSelectOptions}
+      </select>
       <select id="periodSelect" class="period-select" title="Período">
         <option value="all" ${period === 'all' ? 'selected' : ''}>Todo o período</option>
         <option value="1d" ${period === '1d' ? 'selected' : ''}>Últimas 24h</option>
@@ -1250,20 +1269,33 @@ app.get('/painel', asyncHandler(async (req, res) => {
     </div>` : '') +
     tabsHtml;
 
+  const dashboardBaseQs = [period !== 'all' && 'period=' + period, filterProjectId && 'project=' + encodeURIComponent(filterProjectId), adminKey && 'key=' + encodeURIComponent(adminKey)].filter(Boolean).join('&');
   const dashboardHeaderRight =
     `<span class="dashboard-updated">Atualizado em ${new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</span>
-     <a href="/painel${period !== 'all' ? '?period=' + period : ''}${adminKey ? (period !== 'all' ? '&' : '?') + 'key=' + encodeURIComponent(adminKey) : ''}" class="btn btn-sm btn-primary">Atualizar</a>
+     <a href="/painel${dashboardBaseQs ? '?' + dashboardBaseQs : ''}" class="btn btn-sm btn-primary">Atualizar</a>
      <span class="dashboard-user">Admin</span>`;
 
   const dashboardScripts = `
   <script>
     var adminKey = ${JSON.stringify(adminKey)};
+    var currentPeriod = ${JSON.stringify(period)};
+    var currentProject = ${JSON.stringify(filterProjectId || '')};
+    function buildDashboardQuery(periodVal, projectVal) {
+      var parts = [];
+      if (periodVal && periodVal !== 'all') parts.push('period=' + encodeURIComponent(periodVal));
+      if (projectVal) parts.push('project=' + encodeURIComponent(projectVal));
+      if (adminKey) parts.push('key=' + encodeURIComponent(adminKey));
+      return parts.length ? '?' + parts.join('&') : '';
+    }
+    var projectSel = document.getElementById('projectSelect');
+    if (projectSel) projectSel.addEventListener('change', function() {
+      window.location.href = '/painel' + buildDashboardQuery(currentPeriod, this.value || null);
+    });
     var sel = document.getElementById('periodSelect');
     if (sel) sel.addEventListener('change', function() {
       var v = this.value;
-      var q = v !== 'all' ? '?period=' + v : '';
-      if (adminKey) q += (q ? '&' : '?') + 'key=' + encodeURIComponent(adminKey);
-      window.location.href = '/painel' + q;
+      currentPeriod = v;
+      window.location.href = '/painel' + buildDashboardQuery(v, currentProject || null);
     });
     (function() {
       var tabResumo = document.getElementById('tab-resumo');
@@ -1988,6 +2020,7 @@ app.get('/painel/export/resumo', async (req, res) => {
   if (!isAdminAuthorized(req)) return res.redirect(302, '/login');
   if (!pool) return res.status(503).send('Banco não configurado.');
   const period = req.query.period || 'all';
+  const projectParam = req.query.project || '';
   let dateFrom = null;
   if (period === '1d') dateFrom = new Date(Date.now() - 24 * 60 * 60 * 1000);
   else if (period === '7d') dateFrom = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
@@ -2002,15 +2035,19 @@ app.get('/painel/export/resumo', async (req, res) => {
   } catch (e) {
     return res.status(500).send('Erro ao carregar projetos.');
   }
+  const filterProjectId = projectParam && projects.some((p) => p.id === projectParam) ? projectParam : null;
+  if (filterProjectId) projects = projects.filter((p) => p.id === filterProjectId);
+
   let statsByProject = {};
   try {
     const dateCondition = dateFrom ? ' AND created_at >= $1' : '';
-    const params = dateFrom ? [dateFrom.toISOString()] : [];
+    const projectCondition = filterProjectId ? (dateFrom ? ' AND project_id = $2' : ' AND project_id = $1') : '';
+    const params = [...(dateFrom ? [dateFrom.toISOString()] : []), ...(filterProjectId ? [filterProjectId] : [])];
     const rStats = await pool.query(
       `SELECT project_id, COUNT(*) AS total_events,
               COUNT(*) FILTER (WHERE event_name = 'Purchase') AS purchases,
               COALESCE(SUM(value) FILTER (WHERE event_name = 'Purchase'), 0) AS total_value
-       FROM normalized_events WHERE 1=1${dateCondition} GROUP BY project_id`,
+       FROM normalized_events WHERE 1=1${dateCondition}${projectCondition} GROUP BY project_id`,
       params
     );
     rStats.rows.forEach((row) => {
@@ -2036,14 +2073,15 @@ app.get('/painel/export/resumo', async (req, res) => {
   let utmData = [];
   try {
     const dateCondUtm = dateFrom ? ' AND created_at >= $1' : '';
-    const utmParams = dateFrom ? [dateFrom.toISOString()] : [];
+    const projectCondUtm = filterProjectId ? (dateFrom ? ' AND project_id = $2' : ' AND project_id = $1') : '';
+    const utmParams = [...(dateFrom ? [dateFrom.toISOString()] : []), ...(filterProjectId ? [filterProjectId] : [])];
     const rUtm = await pool.query(
       `SELECT COALESCE(context->>'utm_source', '—') AS utm_source,
               COALESCE(context->>'utm_medium', '—') AS utm_medium,
               COALESCE(context->>'utm_campaign', '—') AS utm_campaign,
               COUNT(*) AS purchases, COALESCE(SUM(value), 0) AS total_value
        FROM normalized_events
-       WHERE event_name = 'Purchase'${dateCondUtm}
+       WHERE event_name = 'Purchase'${dateCondUtm}${projectCondUtm}
        GROUP BY context->>'utm_source', context->>'utm_medium', context->>'utm_campaign'
        ORDER BY total_value DESC LIMIT 50`,
       utmParams
