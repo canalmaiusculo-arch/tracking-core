@@ -28,6 +28,11 @@ const hasMetaConfig = Boolean(META_PIXEL_ID && META_ACCESS_TOKEN);
 const ADMIN_SECRET = process.env.ADMIN_SECRET || null;
 const BASE_URL = process.env.BASE_URL || null; // ex: https://track.ascensaodomentor.com
 
+// Meta Marketing API (OAuth para listar campanhas e gastos)
+const META_ADS_APP_ID = process.env.META_ADS_APP_ID || null;
+const META_ADS_APP_SECRET = process.env.META_ADS_APP_SECRET || null;
+const hasMetaAdsOAuthConfig = Boolean(META_ADS_APP_ID && META_ADS_APP_SECRET && BASE_URL);
+
 // Rate limit (por minuto, por chave)
 const RATE_LIMIT_EVENTS = parseInt(process.env.RATE_LIMIT_EVENTS_PER_MIN, 10) || 120;
 const RATE_LIMIT_WEBHOOK = parseInt(process.env.RATE_LIMIT_WEBHOOK_PER_MIN, 10) || 60;
@@ -129,7 +134,7 @@ function csvEscape(s) {
 
 /** Layout compartilhado do painel: sidebar (Dashboard, Pixel, Projetos) + área principal */
 function painelLayout(opts) {
-  const { activeNav = 'dashboard', title = 'Painel', headerRight = '', content = '', adminKey = '', extraScripts = '' } = opts;
+  const { activeNav = 'dashboard', title = 'Painel', headerLogo = '', headerRight = '', content = '', adminKey = '', extraScripts = '' } = opts;
   const q = (adminKey ? '?key=' + encodeURIComponent(adminKey) : '');
   const href = (path) => path + (path.indexOf('?') !== -1 ? (adminKey ? '&key=' + encodeURIComponent(adminKey) : '') : q);
   const link = (path, label, nav) =>
@@ -140,8 +145,10 @@ function painelLayout(opts) {
       ${link('/painel', 'Dashboard', 'dashboard')}
       ${link('/painel/pixel', 'Pixel', 'pixel')}
       ${link('/painel/projetos', 'Projetos', 'projetos')}
+      ${link('/painel/meta-ads', 'Meta Ads', 'meta_ads')}
     </nav>
     <a href="/logout" class="sidebar-link sidebar-logout">Sair</a>`;
+  const headerLeft = headerLogo ? `<span class="dashboard-header-logo">${escapeHtml(headerLogo)}</span>` : '';
   return `<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -160,7 +167,7 @@ function painelLayout(opts) {
     <main class="dashboard-main">
       <header class="dashboard-header">
         <button type="button" class="btn-hamburger" id="btnHamburger" aria-label="Abrir menu">≡</button>
-        <h1 class="dashboard-title">${escapeHtml(title)}</h1>
+        <div class="dashboard-header-left">${headerLeft}<h1 class="dashboard-title">${escapeHtml(title)}</h1></div>
         <div class="dashboard-header-right">${headerRight}</div>
       </header>
       <div class="dashboard-content">${content}</div>
@@ -878,6 +885,59 @@ app.get('/painel', async (req, res) => {
   }
   const utmRowsHtml = utmRows.join('');
 
+  // Aba Campanhas: uma linha por UTM com colunas Campanha, Vendas, Faturamento, Custo, CPA, ROAS
+  let campaignRowsForTab = '';
+  try {
+    const rUtm2 = await pool.query(
+      `SELECT
+        COALESCE(context->>'utm_source', '—') AS utm_source,
+        COALESCE(context->>'utm_medium', '—') AS utm_medium,
+        COALESCE(context->>'utm_campaign', '—') AS utm_campaign,
+        COUNT(*) AS purchases,
+        COALESCE(SUM(value), 0) AS total_value
+       FROM normalized_events
+       WHERE event_name = 'Purchase'${dateCondUtm}
+       GROUP BY context->>'utm_source', context->>'utm_medium', context->>'utm_campaign'
+       ORDER BY total_value DESC
+       LIMIT 50`,
+      utmParams
+    );
+    campaignRowsForTab = rUtm2.rows.map((row) => {
+      const purchases = parseInt(row.purchases, 10) || 0;
+      const v = parseFloat(row.total_value) || 0;
+      const valueStr = v > 0 ? 'R$ ' + Number(v).toFixed(2).replace('.', ',') : '—';
+      const key = [row.utm_source, row.utm_medium, row.utm_campaign].join('\0');
+      const cost = costByUtm[key] ?? 0;
+      const costStr = cost > 0 ? Number(cost).toFixed(2) : '';
+      const cpaStr = cost > 0 && purchases > 0 ? 'R$ ' + Number(cost / purchases).toFixed(2).replace('.', ',') : '—';
+      const roasStr = cost > 0 && v > 0 ? Number(v / cost).toFixed(2).replace('.', ',') : '—';
+      const us = escapeHtml(row.utm_source);
+      const um = escapeHtml(row.utm_medium);
+      const uc = escapeHtml(row.utm_campaign);
+      const campaignLabel = uc !== '—' ? `[${uc}] – ${row.utm_source}/${row.utm_medium}` : `${row.utm_source} / ${row.utm_medium}`;
+      return `<tr class="utm-cost-row" data-us="${us}" data-um="${um}" data-uc="${uc}">
+        <td><span class="campaign-name">${escapeHtml(campaignLabel)}</span></td>
+        <td>${purchases}</td>
+        <td>${valueStr}</td>
+        <td><input type="number" step="0.01" min="0" class="input-cost" value="${cost > 0 ? cost : ''}" placeholder="0"></td>
+        <td class="cpa-cell">${cpaStr}</td>
+        <td class="roas-cell">${roasStr}</td>
+        <td><button type="button" class="btn btn-sm btn-save-cost">Salvar</button></td>
+      </tr>`;
+    }).join('');
+  } catch (e) {
+    // ignora
+  }
+  const campaignPanelHtml = `<div class="dashboard-tabs-panel" id="panel-campanhas" aria-hidden="true" style="display:none">
+    <div class="dashboard-table-wrap">
+    <table class="dashboard-table dashboard-table-campaigns">
+      <thead><tr><th>Campanha</th><th>Vendas</th><th>Faturamento</th><th>Custo (R$)</th><th>CPA</th><th>ROAS</th><th></th></tr></thead>
+      <tbody>${campaignRowsForTab || '<tr><td colspan="7" class="events-empty">Nenhuma campanha (UTM) com compras no período.</td></tr>'}</tbody>
+    </table>
+    </div>
+    <p class="metrics-legend">Gastos por campanha são informados manualmente. Para ver gastos automáticos da Meta, é necessária integração com a Meta Marketing API.</p>
+  </div>`;
+
   let untrackedSalesCount = 0;
   try {
     const dateCondUntracked = dateFrom ? ' AND created_at >= $1' : '';
@@ -946,22 +1006,25 @@ app.get('/painel', async (req, res) => {
       <thead><tr><th>Projeto</th><th>Eventos</th><th>Compras</th><th>Valor total</th><th></th></tr></thead>
       <tbody>${summaryRows || '<tr><td colspan="5" class="events-empty">Nenhum projeto com eventos no período.</td></tr>'}</tbody>
     </table>
+    </div>`;
+
+  const tabsHtml = `
+    <div class="dashboard-tabs" role="tablist">
+      <button type="button" class="dashboard-tab active" role="tab" id="tab-resumo" aria-selected="true" aria-controls="panel-resumo">Resumo</button>
+      <button type="button" class="dashboard-tab" role="tab" id="tab-campanhas" aria-selected="false" aria-controls="panel-campanhas">Campanhas</button>
     </div>
-    ${utmRowsHtml ? `<h3 class="section-subtitle">Por campanha (UTM)</h3>
-    <div class="dashboard-table-wrap">
-    <table class="dashboard-table dashboard-table-utm">
-      <thead><tr><th>utm_source</th><th>utm_medium</th><th>utm_campaign</th><th>Compras</th><th>Valor</th><th>Custo (R$)</th><th>CPA</th><th>ROAS</th><th></th></tr></thead>
-      <tbody>${utmRowsHtml}</tbody>
-    </table>
-    </div>` : ''}`;
+    <div class="dashboard-tabs-panel" id="panel-resumo" role="tabpanel" aria-labelledby="tab-resumo">
+      ${kpiCardsHtml}
+      ${summaryHtml}
+    </div>
+    ${campaignPanelHtml}`;
 
   const dashboardContent =
     (untrackedSalesCount > 0 ? `<div class="alert alert-warning" id="alert-untracked">
       <strong>${untrackedSalesCount} venda${untrackedSalesCount !== 1 ? 's' : ''} não trackeada${untrackedSalesCount !== 1 ? 's' : ''}.</strong>
       Compras que chegaram pelo gateway (ex.: Kiwify) sem UTM — não é possível atribuir a uma campanha.
     </div>` : '') +
-    kpiCardsHtml +
-    summaryHtml;
+    tabsHtml;
 
   const dashboardHeaderRight =
     `<span class="dashboard-updated">Atualizado em ${new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</span>
@@ -978,6 +1041,26 @@ app.get('/painel', async (req, res) => {
       if (adminKey) q += (q ? '&' : '?') + 'key=' + encodeURIComponent(adminKey);
       window.location.href = '/painel' + q;
     });
+    (function() {
+      var tabResumo = document.getElementById('tab-resumo');
+      var tabCampanhas = document.getElementById('tab-campanhas');
+      var panelResumo = document.getElementById('panel-resumo');
+      var panelCampanhas = document.getElementById('panel-campanhas');
+      function showResumo() {
+        if (panelResumo) { panelResumo.style.display = ''; panelResumo.setAttribute('aria-hidden', 'false'); }
+        if (panelCampanhas) { panelCampanhas.style.display = 'none'; panelCampanhas.setAttribute('aria-hidden', 'true'); }
+        if (tabResumo) { tabResumo.classList.add('active'); tabResumo.setAttribute('aria-selected', 'true'); }
+        if (tabCampanhas) { tabCampanhas.classList.remove('active'); tabCampanhas.setAttribute('aria-selected', 'false'); }
+      }
+      function showCampanhas() {
+        if (panelResumo) { panelResumo.style.display = 'none'; panelResumo.setAttribute('aria-hidden', 'true'); }
+        if (panelCampanhas) { panelCampanhas.style.display = ''; panelCampanhas.setAttribute('aria-hidden', 'false'); }
+        if (tabResumo) { tabResumo.classList.remove('active'); tabResumo.setAttribute('aria-selected', 'false'); }
+        if (tabCampanhas) { tabCampanhas.classList.add('active'); tabCampanhas.setAttribute('aria-selected', 'true'); }
+      }
+      if (tabResumo) tabResumo.addEventListener('click', showResumo);
+      if (tabCampanhas) tabCampanhas.addEventListener('click', showCampanhas);
+    })();
     document.querySelectorAll('.btn-save-cost').forEach(function(btn) {
       btn.addEventListener('click', function() {
         var row = btn.closest('tr');
@@ -1002,7 +1085,8 @@ app.get('/painel', async (req, res) => {
 
   const html = painelLayout({
     activeNav: 'dashboard',
-    title: 'Dashboard',
+    title: 'Dashboard - Principal',
+    headerLogo: 'Tracking Core',
     headerRight: dashboardHeaderRight,
     content: dashboardContent,
     adminKey,
@@ -1432,6 +1516,243 @@ app.get('/painel/pixel', async (req, res) => {
     adminKey
   });
   res.type('html').send(html);
+});
+
+// ---------- Meta Ads (Marketing API): OAuth + listar campanhas e gastos ----------
+const META_ADS_SCOPE = 'ads_read';
+const META_GRAPH_VERSION = 'v18.0';
+
+function metaAdsStateCookieName() {
+  return 'meta_ads_state';
+}
+
+function createMetaAdsState() {
+  const state = crypto.randomBytes(16).toString('hex');
+  const sign = crypto.createHmac('sha256', ADMIN_SECRET || 'meta-ads').update(state).digest('hex');
+  return state + '.' + sign.slice(0, 8);
+}
+
+function verifyMetaAdsState(req, stateFromQuery) {
+  const raw = getCookie(req, metaAdsStateCookieName());
+  if (!raw || !stateFromQuery || raw !== stateFromQuery) return false;
+  const idx = raw.lastIndexOf('.');
+  const state = idx >= 0 ? raw.slice(0, idx) : raw;
+  const sig = idx >= 0 ? raw.slice(idx + 1) : '';
+  const expected = crypto.createHmac('sha256', ADMIN_SECRET || 'meta-ads').update(state).digest('hex').slice(0, 8);
+  return sig === expected;
+}
+
+// Redireciona para o OAuth da Meta
+app.get('/painel/meta-ads/connect', (req, res) => {
+  if (!ADMIN_SECRET) return res.status(503).send('Painel desativado.');
+  if (!isAdminAuthorized(req)) return res.redirect(302, '/login');
+  if (!hasMetaAdsOAuthConfig) {
+    return res.redirect(302, '/painel/meta-ads?key=' + encodeURIComponent(req.query.key || '') + '&error=config');
+  }
+  const state = createMetaAdsState();
+  const redirectUri = BASE_URL + '/painel/meta-ads/callback';
+  res.cookie(metaAdsStateCookieName(), state, { httpOnly: true, maxAge: 600, sameSite: 'lax' });
+  const url = `https://www.facebook.com/${META_GRAPH_VERSION}/dialog/oauth?client_id=${encodeURIComponent(META_ADS_APP_ID)}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${encodeURIComponent(META_ADS_SCOPE)}&state=${encodeURIComponent(state)}`;
+  res.redirect(302, url);
+});
+
+// Callback OAuth: troca code por token, obtém conta de anúncios, grava conexão
+app.get('/painel/meta-ads/callback', async (req, res) => {
+  if (!ADMIN_SECRET || !pool) return res.redirect(302, '/painel/meta-ads?error=server');
+  const state = req.query.state;
+  const code = req.query.code;
+  const adminKey = req.query.key || '';
+  const q = adminKey ? '?key=' + encodeURIComponent(adminKey) : '';
+  if (!code || !verifyMetaAdsState(req, state)) {
+    return res.redirect(302, '/painel/meta-ads' + q + '&error=oauth');
+  }
+  res.clearCookie(metaAdsStateCookieName());
+  const redirectUri = BASE_URL + '/painel/meta-ads/callback';
+  try {
+    const tokenRes = await axios.get(`https://graph.facebook.com/${META_GRAPH_VERSION}/oauth/access_token`, {
+      params: {
+        client_id: META_ADS_APP_ID,
+        client_secret: META_ADS_APP_SECRET,
+        redirect_uri: redirectUri,
+        code
+      }
+    });
+    let accessToken = tokenRes.data?.access_token;
+    if (!accessToken) {
+      return res.redirect(302, '/painel/meta-ads' + q + '&error=token');
+    }
+    // Trocar por long-lived token (opcional mas recomendado)
+    try {
+      const longLived = await axios.get(`https://graph.facebook.com/${META_GRAPH_VERSION}/oauth/access_token`, {
+        params: {
+          grant_type: 'fb_exchange_token',
+          client_id: META_ADS_APP_ID,
+          client_secret: META_ADS_APP_SECRET,
+          fb_exchange_token: accessToken
+        }
+      });
+      if (longLived.data?.access_token) accessToken = longLived.data.access_token;
+    } catch (_) {
+      // mantém short-lived se falhar
+    }
+    const adAccountsRes = await axios.get(`https://graph.facebook.com/${META_GRAPH_VERSION}/me/adaccounts`, {
+      params: { fields: 'id,name,account_id', access_token: accessToken }
+    });
+    const accounts = adAccountsRes.data?.data || [];
+    if (accounts.length === 0) {
+      return res.redirect(302, '/painel/meta-ads' + q + '&error=no_accounts');
+    }
+    const adAccount = accounts[0];
+    const adAccountId = adAccount.id || adAccount.account_id;
+    const adAccountName = adAccount.name || null;
+    const tenantRow = await pool.query('SELECT id FROM tenants WHERE status = $1 ORDER BY created_at LIMIT 1', ['active']);
+    const tenantId = tenantRow.rows[0]?.id;
+    if (!tenantId) {
+      return res.redirect(302, '/painel/meta-ads' + q + '&error=no_tenant');
+    }
+    await pool.query(
+      `INSERT INTO meta_ads_connections (tenant_id, ad_account_id, ad_account_name, access_token)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (tenant_id) DO UPDATE SET ad_account_id = $2, ad_account_name = $3, access_token = $4`,
+      [tenantId, adAccountId, adAccountName, accessToken]
+    );
+    return res.redirect(302, '/painel/meta-ads' + q);
+  } catch (e) {
+    console.error('[tracking-core] Meta Ads callback error:', e.response?.data || e.message);
+    return res.redirect(302, '/painel/meta-ads' + q + '&error=api');
+  }
+});
+
+// Busca campanhas e insights (gastos) na API da Meta
+async function fetchMetaAdsCampaigns(adAccountId, accessToken, datePreset = 'last_30d') {
+  const base = `https://graph.facebook.com/${META_GRAPH_VERSION}`;
+  const campaignsRes = await axios.get(`${base}/${adAccountId}/campaigns`, {
+    params: {
+      fields: 'id,name,status,effective_status',
+      access_token: accessToken
+    }
+  });
+  const campaigns = campaignsRes.data?.data || [];
+  const insightsRes = await axios.get(`${base}/${adAccountId}/insights`, {
+    params: {
+      level: 'campaign',
+      fields: 'campaign_id,campaign_name,spend,impressions,clicks',
+      date_preset: datePreset,
+      access_token: accessToken
+    }
+  });
+  const insights = insightsRes.data?.data || [];
+  const spendByCampaign = {};
+  insights.forEach((row) => {
+    const id = row.campaign_id;
+    if (id) spendByCampaign[id] = { spend: parseFloat(row.spend) || 0, impressions: parseInt(row.impressions, 10) || 0, clicks: parseInt(row.clicks, 10) || 0 };
+  });
+  return campaigns.map((c) => ({
+    id: c.id,
+    name: c.name || '—',
+    status: c.effective_status || c.status || '—',
+    spend: spendByCampaign[c.id]?.spend ?? 0,
+    impressions: spendByCampaign[c.id]?.impressions ?? 0,
+    clicks: spendByCampaign[c.id]?.clicks ?? 0
+  }));
+}
+
+// Página Meta Ads: conectar ou listar campanhas com gastos
+app.get('/painel/meta-ads', async (req, res) => {
+  if (!ADMIN_SECRET) return res.status(503).send('Painel desativado.');
+  if (!isAdminAuthorized(req)) return res.redirect(302, '/login');
+  if (req.query.key === ADMIN_SECRET) setAdminCookie(res);
+  const adminKey = req.query.key || '';
+  const q = adminKey ? '?key=' + encodeURIComponent(adminKey) : '';
+
+  let connection = null;
+  let campaigns = [];
+  let errorMsg = '';
+  const err = req.query.error;
+  if (err === 'config') errorMsg = 'Configure META_ADS_APP_ID, META_ADS_APP_SECRET e BASE_URL no .env para usar a integração Meta Ads.';
+  else if (err === 'oauth') errorMsg = 'Falha na autorização OAuth (state inválido ou expirado).';
+  else if (err === 'token') errorMsg = 'Não foi possível obter o token de acesso.';
+  else if (err === 'no_accounts') errorMsg = 'Nenhuma conta de anúncios encontrada na sua conta Meta.';
+  else if (err === 'no_tenant') errorMsg = 'Nenhum tenant ativo no banco. Execute o seed ou crie um tenant.';
+  else if (err === 'api') errorMsg = 'Erro ao comunicar com a API da Meta. Tente novamente.';
+
+  if (pool) {
+    try {
+      const connRow = await pool.query(
+        'SELECT id, ad_account_id, ad_account_name, access_token FROM meta_ads_connections ORDER BY created_at DESC LIMIT 1'
+      );
+      connection = connRow.rows[0] || null;
+      if (connection) {
+        const datePreset = req.query.period === '7d' ? 'last_7d' : req.query.period === '1d' ? 'today' : 'last_30d';
+        campaigns = await fetchMetaAdsCampaigns(connection.ad_account_id, connection.access_token, datePreset);
+      } catch (e) {
+        if (e.code !== '42P01') {
+          console.error('[tracking-core] Meta Ads list error:', e.message);
+          errorMsg = errorMsg || 'Erro ao carregar conexão ou campanhas.';
+        }
+        // 42P01 = table does not exist → mostrar instrução para rodar sql/meta_ads.sql
+        if (e.code === '42P01') errorMsg = 'Tabela meta_ads_connections não existe. Rode o script sql/meta_ads.sql no banco.';
+      }
+    } catch (e) {
+      console.error('[tracking-core] Meta Ads:', e.message);
+    }
+  }
+
+  const periodLinks = [
+    { label: 'Hoje', period: '1d' },
+    { label: '7 dias', period: '7d' },
+    { label: '30 dias', period: '30d' }
+  ];
+  const currentPeriod = req.query.period || '30d';
+  const periodBar = periodLinks.map((p) => `<a href="/painel/meta-ads?period=${p.period}${adminKey ? '&key=' + encodeURIComponent(adminKey) : ''}" class="btn btn-sm ${currentPeriod === p.period ? 'btn-primary' : ''}">${p.label}</a>`).join(' ');
+
+  let content = '';
+  if (errorMsg) {
+    content += `<div class="alert alert-warning">${escapeHtml(errorMsg)}</div>`;
+  }
+  if (!connection) {
+    content += `<p class="dashboard-lead">Conecte sua conta Meta para listar campanhas e gastos diretamente da API. Requer um app em <a href="https://developers.facebook.com" target="_blank" rel="noopener">developers.facebook.com</a> com permissão <code>ads_read</code>.</p>`;
+    if (hasMetaAdsOAuthConfig) {
+      content += `<p><a href="/painel/meta-ads/connect${adminKey ? '?key=' + encodeURIComponent(adminKey) : ''}" class="btn btn-primary">Conectar Meta Ads</a></p>`;
+    } else {
+      content += `<p class="text-muted">Configure <code>META_ADS_APP_ID</code>, <code>META_ADS_APP_SECRET</code> e <code>BASE_URL</code> no .env para habilitar o botão de conexão.</p>`;
+    }
+  } else {
+    content += `<p class="dashboard-lead">Conta de anúncios: <strong>${escapeHtml(connection.ad_account_name || connection.ad_account_id)}</strong>. <a href="/painel/meta-ads/disconnect${adminKey ? '?key=' + encodeURIComponent(adminKey) : ''}" class="btn btn-sm" onclick="return confirm('Desconectar?');">Desconectar</a></p>`;
+    content += `<div class="section-header-actions" style="margin-bottom:1rem">Período: ${periodBar}</div>`;
+    content += `<div class="dashboard-table-wrap"><table class="dashboard-table dashboard-table-campaigns">
+      <thead><tr><th>Campanha</th><th>Status</th><th>Gastos</th><th>Impressões</th><th>Cliques</th></tr></thead>
+      <tbody>`;
+    campaigns.forEach((c) => {
+      const spendStr = c.spend > 0 ? 'R$ ' + Number(c.spend).toFixed(2).replace('.', ',') : 'R$ 0,00';
+      content += `<tr><td><span class="campaign-name">${escapeHtml(c.name)}</span></td><td>${escapeHtml(c.status)}</td><td>${spendStr}</td><td>${c.impressions}</td><td>${c.clicks}</td></tr>`;
+    });
+    if (campaigns.length === 0) content += '<tr><td colspan="5" class="events-empty">Nenhuma campanha no período ou sem dados de insights.</td></tr>';
+    content += '</tbody></table></div>';
+  }
+
+  const html = painelLayout({
+    activeNav: 'meta_ads',
+    title: 'Meta Ads',
+    headerRight: '<span class="dashboard-user">Admin</span>',
+    content,
+    adminKey
+  });
+  res.type('html').send(html);
+});
+
+// Desconectar Meta Ads (remove token)
+app.get('/painel/meta-ads/disconnect', async (req, res) => {
+  if (!ADMIN_SECRET) return res.status(503).send('Painel desativado.');
+  if (!isAdminAuthorized(req)) return res.redirect(302, '/login');
+  const adminKey = req.query.key || '';
+  const q = adminKey ? '?key=' + encodeURIComponent(adminKey) : '';
+  if (pool) {
+    try {
+      await pool.query('DELETE FROM meta_ads_connections');
+    } catch (_) {}
+  }
+  res.redirect(302, '/painel/meta-ads' + q);
 });
 
 // Exportar resumo (projetos + UTM) em CSV

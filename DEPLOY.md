@@ -44,6 +44,7 @@ Com a API em um servidor na nuvem, qualquer pessoa pode acessar e a Kiwify conse
    - `ADMIN_SECRET` = uma chave secreta forte (ex.: senha longa ou UUID). Necessária para acessar o painel e criar projetos.
    - `BASE_URL` = URL pública da API (ex.: `https://track.ascensaodomentor.com`). Usada nos snippets do painel.
    - (Opcional) `META_PIXEL_ID`, `META_ACCESS_TOKEN`, `META_TEST_EVENT_CODE` se quiser Meta global (fallback quando o projeto não tem integração)
+   - (Opcional) **Meta Ads (listar campanhas e gastos):** `META_ADS_APP_ID`, `META_ADS_APP_SECRET` (crie um app em developers.facebook.com com permissão `ads_read`; use a mesma `BASE_URL` como redirect). Rode no banco o script `sql/meta_ads.sql` para criar a tabela `meta_ads_connections`.
 7. Em **Settings**, procure por **Public Networking** ou **Generate Domain** e ative. Se tiver domínio próprio (ex.: track.ascensaodomentor.com), configure em **Settings → Domains**.
 8. Anote a URL da API (ex.: `https://track.ascensaodomentor.com`).
 
