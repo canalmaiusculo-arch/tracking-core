@@ -975,6 +975,27 @@ app.get('/painel', asyncHandler(async (req, res) => {
     // ignora
   }
 
+  // Contagem por evento de scroll (funil de engajamento)
+  const scrollEventNames = ['PageView', 'scroll_25', 'scroll_50', 'scroll_75', 'scroll_100'];
+  let scrollCounts = { PageView: 0, scroll_25: 0, scroll_50: 0, scroll_75: 0, scroll_100: 0 };
+  try {
+    const dateCondScroll = dateFrom ? ' AND created_at >= $2' : '';
+    const rScroll = await pool.query(
+      `SELECT event_name, COUNT(*) AS cnt
+       FROM normalized_events
+       WHERE event_name = ANY($1::text[])${dateCondScroll}
+       GROUP BY event_name`,
+      dateFrom ? [scrollEventNames, dateFrom.toISOString()] : [scrollEventNames]
+    );
+    rScroll.rows.forEach((row) => {
+      if (Object.prototype.hasOwnProperty.call(scrollCounts, row.event_name)) {
+        scrollCounts[row.event_name] = parseInt(row.cnt, 10) || 0;
+      }
+    });
+  } catch (e) {
+    // ignora
+  }
+
   let totalEvents = 0;
   let totalPurchases = 0;
   let totalValue = 0;
@@ -1028,6 +1049,48 @@ app.get('/painel', asyncHandler(async (req, res) => {
     </table>
     </div>`;
 
+  const pv = scrollCounts.PageView || 1;
+  const pct25 = scrollCounts.scroll_25;
+  const pct50 = scrollCounts.scroll_50;
+  const pct75 = scrollCounts.scroll_75;
+  const pct100 = scrollCounts.scroll_100;
+  const scrollFunnelHtml =
+    `<div class="scroll-funnel-section">
+    <h3 class="section-subtitle">Engajamento (scroll)</h3>
+    <p class="dashboard-lead dashboard-lead--compact">Até onde os visitantes rolaram a página (eventos scroll 25%, 50%, 75%, 100% no período).</p>
+    <div class="scroll-funnel">
+      <div class="scroll-funnel__step" title="Visualizações de página">
+        <div class="scroll-funnel__label">PageView</div>
+        <div class="scroll-funnel__value">${scrollCounts.PageView}</div>
+        <div class="scroll-funnel__pct">100%</div>
+      </div>
+      <div class="scroll-funnel__arrow" aria-hidden="true">→</div>
+      <div class="scroll-funnel__step" title="Rolaram até 25%">
+        <div class="scroll-funnel__label">25%</div>
+        <div class="scroll-funnel__value">${pct25}</div>
+        <div class="scroll-funnel__pct">${pv ? Math.round((pct25 / pv) * 100) : 0}%</div>
+      </div>
+      <div class="scroll-funnel__arrow" aria-hidden="true">→</div>
+      <div class="scroll-funnel__step" title="Rolaram até 50%">
+        <div class="scroll-funnel__label">50%</div>
+        <div class="scroll-funnel__value">${pct50}</div>
+        <div class="scroll-funnel__pct">${pv ? Math.round((pct50 / pv) * 100) : 0}%</div>
+      </div>
+      <div class="scroll-funnel__arrow" aria-hidden="true">→</div>
+      <div class="scroll-funnel__step" title="Rolaram até 75%">
+        <div class="scroll-funnel__label">75%</div>
+        <div class="scroll-funnel__value">${pct75}</div>
+        <div class="scroll-funnel__pct">${pv ? Math.round((pct75 / pv) * 100) : 0}%</div>
+      </div>
+      <div class="scroll-funnel__arrow" aria-hidden="true">→</div>
+      <div class="scroll-funnel__step" title="Rolaram até 100%">
+        <div class="scroll-funnel__label">100%</div>
+        <div class="scroll-funnel__value">${pct100}</div>
+        <div class="scroll-funnel__pct">${pv ? Math.round((pct100 / pv) * 100) : 0}%</div>
+      </div>
+    </div>
+    </div>`;
+
   const tabsHtml = `
     <div class="dashboard-tabs" role="tablist">
       <button type="button" class="dashboard-tab active" role="tab" id="tab-resumo" aria-selected="true" aria-controls="panel-resumo">Resumo</button>
@@ -1036,6 +1099,7 @@ app.get('/painel', asyncHandler(async (req, res) => {
     <div class="dashboard-tabs-panel" id="panel-resumo" role="tabpanel" aria-labelledby="tab-resumo">
       ${kpiCardsHtml}
       ${summaryHtml}
+      ${scrollFunnelHtml}
     </div>
     ${campaignPanelHtml}`;
 
