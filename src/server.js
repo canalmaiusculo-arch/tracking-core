@@ -36,6 +36,35 @@ const hasMetaAdsOAuthConfig = Boolean(META_ADS_APP_ID && META_ADS_APP_SECRET && 
 // Alerta global: webhook chamado em toda compra (além do webhook por projeto)
 const ALERT_WEBHOOK_URL = process.env.ALERT_WEBHOOK_URL || null;
 
+// Fuso horário: exibição sempre em Brasília
+const TZ_BRASILIA = 'America/Sao_Paulo';
+
+function formatTimeBrasilia(dateInput) {
+  const date = typeof dateInput === 'string' ? new Date(dateInput) : dateInput;
+  if (Number.isNaN(date.getTime())) return String(dateInput ?? '');
+  return date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: TZ_BRASILIA });
+}
+
+function formatDateTimeBrasilia(dateInput) {
+  const date = typeof dateInput === 'string' ? new Date(dateInput) : dateInput;
+  if (Number.isNaN(date.getTime())) return String(dateInput ?? '');
+  return date.toLocaleString('pt-BR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: TZ_BRASILIA
+  });
+}
+
+function dateStringBrasilia(dateInput) {
+  const date = typeof dateInput === 'string' ? new Date(dateInput) : dateInput;
+  if (Number.isNaN(date.getTime())) return '';
+  const parts = date.toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA }).split('/');
+  return parts.length === 3 ? [parts[2], parts[1], parts[0]].join('-') : '';
+}
+
 // Rate limit (por minuto, por chave)
 const RATE_LIMIT_EVENTS = parseInt(process.env.RATE_LIMIT_EVENTS_PER_MIN, 10) || 120;
 const RATE_LIMIT_WEBHOOK = parseInt(process.env.RATE_LIMIT_WEBHOOK_PER_MIN, 10) || 60;
@@ -1271,7 +1300,7 @@ app.get('/painel', asyncHandler(async (req, res) => {
 
   const dashboardBaseQs = [period !== 'all' && 'period=' + period, filterProjectId && 'project=' + encodeURIComponent(filterProjectId), adminKey && 'key=' + encodeURIComponent(adminKey)].filter(Boolean).join('&');
   const dashboardHeaderRight =
-    `<span class="dashboard-updated">Atualizado em ${new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</span>
+    `<span class="dashboard-updated">Atualizado em ${formatTimeBrasilia(new Date())} (Brasília)</span>
      <a href="/painel${dashboardBaseQs ? '?' + dashboardBaseQs : ''}" class="btn btn-sm btn-primary">Atualizar</a>
      <span class="dashboard-user">Admin</span>`;
 
@@ -2117,7 +2146,7 @@ app.get('/painel/export/resumo', async (req, res) => {
     rows.push([csvEscape(row.utm_source), csvEscape(row.utm_medium), csvEscape(row.utm_campaign), row.purchases, vStr, costStr, cpaStr, roasStr].join(';'));
   });
   const csv = '\uFEFF' + rows.join('\r\n');
-  const filename = 'resumo-' + (period !== 'all' ? period + '-' : '') + new Date().toISOString().slice(0, 10) + '.csv';
+  const filename = 'resumo-' + (period !== 'all' ? period + '-' : '') + dateStringBrasilia(new Date()) + '.csv';
   res.setHeader('Content-Disposition', 'attachment; filename="' + filename + '"');
   res.type('text/csv; charset=utf-8').send(csv);
 });
@@ -2456,10 +2485,10 @@ app.get('/painel/events/:projectId/export', async (req, res) => {
       return 'Principal';
     };
     const csvRows = r.rows.map((e) =>
-      [csvEscape(e.created_at), csvEscape(e.event_name), csvEscape(tipoStr(e)), csvEscape(e.order_id || ''), e.value != null ? e.value : '', csvEscape(e.currency || ''), csvEscape(e.source), csvEscape(e.status)].join(';')
+      [csvEscape(formatDateTimeBrasilia(e.created_at)), csvEscape(e.event_name), csvEscape(tipoStr(e)), csvEscape(e.order_id || ''), e.value != null ? e.value : '', csvEscape(e.currency || ''), csvEscape(e.source), csvEscape(e.status)].join(';')
     );
     const csv = '\uFEFF' + [header, ...csvRows].join('\r\n');
-    const filename = 'eventos-' + projectId.slice(0, 8) + '-' + (period !== 'all' ? period + '-' : '') + new Date().toISOString().slice(0, 10) + '.csv';
+    const filename = 'eventos-' + projectId.slice(0, 8) + '-' + (period !== 'all' ? period + '-' : '') + dateStringBrasilia(new Date()) + '.csv';
     res.setHeader('Content-Disposition', 'attachment; filename="' + filename + '"');
     res.type('text/csv; charset=utf-8').send(csv);
   } catch (err) {
@@ -2501,7 +2530,7 @@ app.get('/painel/events/:projectId', async (req, res) => {
       .map(
         (e) => {
           const tipo = e.event_name === 'Purchase' ? purchaseTipo(e) : '—';
-          return `<tr><td>${escapeHtml(e.created_at)}</td><td>${escapeHtml(e.event_name)}</td><td>${tipo}</td><td>${escapeHtml(e.order_id || '—')}</td><td>${e.value != null ? e.value : '—'}</td><td>${escapeHtml(e.source)}</td><td>${escapeHtml(e.status)}</td></tr>`;
+          return `<tr><td>${escapeHtml(formatDateTimeBrasilia(e.created_at))}</td><td>${escapeHtml(e.event_name)}</td><td>${tipo}</td><td>${escapeHtml(e.order_id || '—')}</td><td>${e.value != null ? e.value : '—'}</td><td>${escapeHtml(e.source)}</td><td>${escapeHtml(e.status)}</td></tr>`;
         }
       )
       .join('');
