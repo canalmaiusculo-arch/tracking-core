@@ -74,6 +74,12 @@ if (DATABASE_URL) {
 }
 
 const app = express();
+
+// Evita crash por erros não tratados em rotas async (Express 4 não os captura)
+const asyncHandler = (fn) => (req, res, next) => {
+  Promise.resolve(fn(req, res, next)).catch(next);
+};
+
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -748,7 +754,7 @@ async function getOrCreateDefaultTenant(client) {
   return ins.rows[0].id;
 }
 
-app.get('/painel', async (req, res) => {
+app.get('/painel', asyncHandler(async (req, res) => {
   if (!ADMIN_SECRET) return res.status(503).send('Painel desativado. Configure ADMIN_SECRET.');
   if (!isAdminAuthorized(req)) return res.redirect(302, '/login');
   if (!pool) {
@@ -1093,10 +1099,10 @@ app.get('/painel', async (req, res) => {
     extraScripts: dashboardScripts
   });
   res.type('html').send(html);
-});
+}));
 
 // Página Projetos: criar, listar, editar, ativar/desativar
-app.get('/painel/projetos', async (req, res) => {
+app.get('/painel/projetos', asyncHandler(async (req, res) => {
   if (!ADMIN_SECRET) return res.status(503).send('Painel desativado. Configure ADMIN_SECRET.');
   if (!isAdminAuthorized(req)) return res.redirect(302, '/login');
   if (!pool) return res.status(503).send('Banco não configurado.');
@@ -1461,10 +1467,10 @@ app.get('/painel/projetos', async (req, res) => {
     extraScripts: projetosScripts
   });
   res.type('html').send(html);
-});
+}));
 
 // Página Pixel: listar conexões Meta e conectar/editar pixel por projeto
-app.get('/painel/pixel', async (req, res) => {
+app.get('/painel/pixel', asyncHandler(async (req, res) => {
   if (!ADMIN_SECRET) return res.status(503).send('Painel desativado.');
   if (!isAdminAuthorized(req)) return res.redirect(302, '/login');
   if (!pool) return res.status(503).send('Banco não configurado.');
@@ -1516,7 +1522,7 @@ app.get('/painel/pixel', async (req, res) => {
     adminKey
   });
   res.type('html').send(html);
-});
+}));
 
 // ---------- Meta Ads (Marketing API): OAuth + listar campanhas e gastos ----------
 const META_ADS_SCOPE = 'ads_read';
@@ -1557,7 +1563,7 @@ app.get('/painel/meta-ads/connect', (req, res) => {
 });
 
 // Callback OAuth: troca code por token, obtém conta de anúncios, grava conexão
-app.get('/painel/meta-ads/callback', async (req, res) => {
+app.get('/painel/meta-ads/callback', asyncHandler(async (req, res) => {
   if (!ADMIN_SECRET || !pool) return res.redirect(302, '/painel/meta-ads?error=server');
   const state = req.query.state;
   const code = req.query.code;
@@ -1621,7 +1627,7 @@ app.get('/painel/meta-ads/callback', async (req, res) => {
     console.error('[tracking-core] Meta Ads callback error:', e.response?.data || e.message);
     return res.redirect(302, '/painel/meta-ads' + q + '&error=api');
   }
-});
+}));
 
 // Busca campanhas e insights (gastos) na API da Meta
 async function fetchMetaAdsCampaigns(adAccountId, accessToken, datePreset = 'last_30d') {
@@ -1658,7 +1664,7 @@ async function fetchMetaAdsCampaigns(adAccountId, accessToken, datePreset = 'las
 }
 
 // Página Meta Ads: conectar ou listar campanhas com gastos
-app.get('/painel/meta-ads', async (req, res) => {
+app.get('/painel/meta-ads', asyncHandler(async (req, res) => {
   if (!ADMIN_SECRET) return res.status(503).send('Painel desativado.');
   if (!isAdminAuthorized(req)) return res.redirect(302, '/login');
   if (req.query.key === ADMIN_SECRET) setAdminCookie(res);
@@ -1684,17 +1690,20 @@ app.get('/painel/meta-ads', async (req, res) => {
       connection = connRow.rows[0] || null;
       if (connection) {
         const datePreset = req.query.period === '7d' ? 'last_7d' : req.query.period === '1d' ? 'today' : 'last_30d';
-        campaigns = await fetchMetaAdsCampaigns(connection.ad_account_id, connection.access_token, datePreset);
-      } catch (e) {
-        if (e.code !== '42P01') {
-          console.error('[tracking-core] Meta Ads list error:', e.message);
-          errorMsg = errorMsg || 'Erro ao carregar conexão ou campanhas.';
+        try {
+          campaigns = await fetchMetaAdsCampaigns(connection.ad_account_id, connection.access_token, datePreset);
+        } catch (apiErr) {
+          console.error('[tracking-core] Meta Ads API error:', apiErr.message);
+          errorMsg = errorMsg || 'Erro ao carregar campanhas da API da Meta. Tente novamente.';
         }
-        // 42P01 = table does not exist → mostrar instrução para rodar sql/meta_ads.sql
-        if (e.code === '42P01') errorMsg = 'Tabela meta_ads_connections não existe. Rode o script sql/meta_ads.sql no banco.';
       }
     } catch (e) {
-      console.error('[tracking-core] Meta Ads:', e.message);
+      if (e.code === '42P01') {
+        errorMsg = 'Tabela meta_ads_connections não existe. Rode o script sql/meta_ads.sql no banco.';
+      } else {
+        console.error('[tracking-core] Meta Ads:', e.message);
+        errorMsg = errorMsg || 'Erro ao carregar conexão ou campanhas.';
+      }
     }
   }
 
@@ -1739,10 +1748,10 @@ app.get('/painel/meta-ads', async (req, res) => {
     adminKey
   });
   res.type('html').send(html);
-});
+}));
 
 // Desconectar Meta Ads (remove token)
-app.get('/painel/meta-ads/disconnect', async (req, res) => {
+app.get('/painel/meta-ads/disconnect', asyncHandler(async (req, res) => {
   if (!ADMIN_SECRET) return res.status(503).send('Painel desativado.');
   if (!isAdminAuthorized(req)) return res.redirect(302, '/login');
   const adminKey = req.query.key || '';
@@ -1753,7 +1762,7 @@ app.get('/painel/meta-ads/disconnect', async (req, res) => {
     } catch (_) {}
   }
   res.redirect(302, '/painel/meta-ads' + q);
-});
+}));
 
 // Exportar resumo (projetos + UTM) em CSV
 app.get('/painel/export/resumo', async (req, res) => {
@@ -2335,6 +2344,14 @@ app.post(
   return res.json({ ok: true });
   }
 );
+
+// Middleware de erro (deve ser registrado por último)
+app.use((err, req, res, next) => {
+  console.error('[tracking-core] Erro não tratado:', err.message || err);
+  if (!res.headersSent) {
+    res.status(500).send('Erro interno. Tente novamente.');
+  }
+});
 
 app.listen(PORT, () => {
   console.log(`[tracking-core] API rodando na porta ${PORT}`);
